@@ -1,5 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+
+type FlowType = 'initial' | 'tenancy' | 'employment' | 'family' | 'contract' | 'notice' | 'clarifying';
+
+interface IntakeState {
+  flow: FlowType;
+  step: number;
+  category: string;
+  urgency: string;
+  urgencyReason: string;
+  facts: { text: string; source: string; label: string }[];
+  missingInfo: string[];
+  suggestedDocs: string[];
+  actionList: { action: string; reason: string }[];
+  timeline: string[];
+  isComplete: boolean;
+}
+
 import {
   Scale,
   Clock,
@@ -339,7 +356,25 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [intakeState, setIntakeState] = useState<IntakeState>({
+    flow: 'initial',
+    step: 0,
+    category: 'Detecting...',
+    urgency: 'Pending Assessment',
+    urgencyReason: '',
+    facts: [],
+    missingInfo: [],
+    suggestedDocs: [],
+    actionList: [],
+    timeline: [],
+    isComplete: false,
+  });
   const [triageSummary, setTriageSummary] = useState<any>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [earlyAccessSubmitted, setEarlyAccessSubmitted] = useState(false);
@@ -479,6 +514,184 @@ export default function App() {
     }
   };
 
+  const processSimulatedChat = (text: string) => {
+    const lowerText = text.toLowerCase();
+    let newState = { ...intakeState };
+    let aiResponse = '';
+
+    // 1. Determine flow if initial
+    if (newState.flow === 'initial') {
+      if (lowerText.match(/landlord|tenancy|deposit|rent|eviction/)) {
+        newState.flow = 'tenancy';
+        newState.category = 'Tenancy & Lease Dispute';
+        newState.suggestedDocs = ['Tenancy Agreement', 'Handover condition report'];
+      } else if (lowerText.match(/employer|salary|termination|dismissal|cpf/)) {
+        newState.flow = 'employment';
+        newState.category = 'Employment Dispute';
+        newState.suggestedDocs = ['Employment Contract', 'Payslips', 'CPF Statements'];
+      } else if (lowerText.match(/divorce|maintenance|child|protection/)) {
+        newState.flow = 'family';
+        newState.category = 'Family & Matrimonial';
+        newState.suggestedDocs = ['Marriage Certificate', 'Relevant Court Orders'];
+      } else if (lowerText.match(/vendor|contract|invoice|client|breach/)) {
+        newState.flow = 'contract';
+        newState.category = 'SME / Contract Dispute';
+        newState.suggestedDocs = ['Signed Contract', 'Invoices', 'Correspondence'];
+      } else if (lowerText.match(/demand letter|fine|notice|summons/)) {
+        newState.flow = 'notice';
+        newState.category = 'Formal Notice / Summons';
+        newState.suggestedDocs = ['The Notice/Summons Document', 'Prior correspondence'];
+      } else {
+        newState.flow = 'clarifying';
+        newState.category = 'General Inquiry';
+      }
+    }
+
+    // 2. Extract facts and update urgency
+    if (lowerText.match(/urgent|today|tomorrow|deadline|court|summons|eviction/)) {
+      newState.urgency = 'High';
+      newState.urgencyReason = 'Mention of immediate deadline or severe action.';
+    } else if (newState.urgency === 'Pending Assessment' && newState.step > 0) {
+      newState.urgency = 'Medium';
+      newState.urgencyReason = 'Standard assessment based on initial facts.';
+    }
+
+    if (text.length > 5) {
+      newState.facts.push({
+        text: text.substring(0, 80) + (text.length > 80 ? '...' : ''),
+        source: 'From user statement',
+        label: 'User-stated'
+      });
+    }
+
+    const dateMatch = text.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2}|\d{1,2} (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|\d{1,2}\/\d{1,2}\/\d{2,4}/i);
+    if (dateMatch) {
+      newState.timeline.push(`Event reported around ${dateMatch[0]}`);
+    } else if (newState.step === 0) {
+      newState.timeline.push('Initial issue reported');
+    }
+
+    // 3. Generate next question
+    newState.step += 1;
+
+    if (newState.flow === 'tenancy') {
+      if (newState.step === 1) {
+        aiResponse = "I understand you're dealing with a tenancy issue. To help me assess the situation under Singapore's tenancy context, is there a written tenancy agreement in place?";
+        newState.missingInfo.push('Written agreement status');
+      } else if (newState.step === 2) {
+        aiResponse = "Got it. What exactly is the dispute about? Is it regarding the security deposit, repairs, unpaid rent, or an eviction threat?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Written agreement status');
+        newState.missingInfo.push('Core dispute details');
+        newState.actionList.push({ action: 'Locate Tenancy Agreement', reason: 'It helps verify the obligations and deposit terms relevant to your dispute.' });
+      } else if (newState.step === 3) {
+        aiResponse = "I see. Has the landlord or agent given any written explanation or formal notice? Do you have receipts, photos, or chat records to support your position?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Core dispute details');
+        newState.missingInfo.push('Evidence availability');
+      } else {
+        aiResponse = "Thank you for sharing those details. I have enough information to generate a preliminary intake summary for your lawyer. Please review the summary on the right.";
+        newState.isComplete = true;
+      }
+    } else if (newState.flow === 'employment') {
+      if (newState.step === 1) {
+        aiResponse = "This sounds like an employment matter. Under the Employment Act context, are you the employee or the employer in this situation?";
+        newState.missingInfo.push('Party role (Employee/Employer)');
+      } else if (newState.step === 2) {
+        aiResponse = "Understood. What specifically happened? Are we looking at unpaid salary, unfair dismissal, workplace harassment, or a benefits issue?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Party role (Employee/Employer)');
+        newState.missingInfo.push('Specific incident details');
+        newState.actionList.push({ action: 'Gather Employment Contract & Payslips', reason: 'Crucial for verifying your employment terms and salary claims.' });
+      } else if (newState.step === 3) {
+        aiResponse = "Was anything communicated in writing regarding this issue? Also, is there an urgent deadline, or have you already approached TADM (Tripartite Alliance for Dispute Management)?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Specific incident details');
+        newState.missingInfo.push('Written communications', 'TADM status');
+      } else {
+        aiResponse = "Thank you. I've gathered the key facts. I will now finalize your intake summary which you can use for a consultation or when filing a claim.";
+        newState.isComplete = true;
+      }
+    } else if (newState.flow === 'family') {
+      if (newState.step === 1) {
+        aiResponse = "I'm sorry to hear you're going through this. For family matters in Singapore, what is the main issue: divorce proceedings, child arrangements, maintenance, or personal protection?";
+        newState.missingInfo.push('Main family issue');
+      } else if (newState.step === 2) {
+        aiResponse = "Has any formal court process already started, or are you looking to initiate one? Are there children involved?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Main family issue');
+        newState.missingInfo.push('Court process status', 'Children involvement');
+        newState.actionList.push({ action: 'Prepare Marriage Certificate & Children\'s Birth Certificates', reason: 'Standard required documents for Family Justice Courts.' });
+      } else if (newState.step === 3) {
+        aiResponse = "Do you have any formal documents, notices, or evidence of the issues you mentioned (e.g., financial records for maintenance)?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Court process status');
+        newState.missingInfo.push('Supporting evidence');
+      } else {
+        aiResponse = "Thank you for providing this sensitive information. Your intake summary is ready on the right, which will help a family lawyer understand your situation quickly.";
+        newState.isComplete = true;
+      }
+    } else if (newState.flow === 'contract') {
+      if (newState.step === 1) {
+        aiResponse = "This appears to be a commercial or contract dispute. Is the other party a client, vendor, employee, or business partner?";
+        newState.missingInfo.push('Counterparty relationship');
+      } else if (newState.step === 2) {
+        aiResponse = "Is there a signed agreement or contract in place? What is the core issue: non-payment, breach of terms, delay, or termination?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Counterparty relationship');
+        newState.missingInfo.push('Contract status', 'Core breach details');
+        newState.actionList.push({ action: 'Organize Invoices and Correspondence', reason: 'Establishes the timeline of the transaction and the dispute.' });
+      } else if (newState.step === 3) {
+        aiResponse = "Do you have supporting documents like invoices or emails? Is there any immediate financial exposure or deadline pressure we should note?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Contract status');
+        newState.missingInfo.push('Financial exposure', 'Deadlines');
+      } else {
+        aiResponse = "Got it. I have compiled the facts into a structured summary for your commercial dispute. Please review it on the right.";
+        newState.isComplete = true;
+      }
+    } else if (newState.flow === 'notice') {
+      if (newState.step === 1) {
+        aiResponse = "Receiving a formal notice can be stressful. Who is the notice from, and what exactly are they demanding or alleging?";
+        newState.missingInfo.push('Issuing party', 'Demands/Allegations');
+      } else if (newState.step === 2) {
+        aiResponse = "Is there a specific deadline stated in the document to respond or make payment?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Issuing party');
+        newState.missingInfo.push('Response deadline');
+        newState.actionList.push({ action: 'Confirm Response Deadline', reason: 'Missing a formal deadline can lead to default judgments or further penalties.' });
+      } else if (newState.step === 3) {
+        aiResponse = "Do you have any documents or evidence that contradict their claims? What outcome are you hoping for?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Response deadline');
+        newState.missingInfo.push('Defense evidence', 'Desired outcome');
+      } else {
+        aiResponse = "Thank you. I've assessed the notice details. Your intake summary is prepared and ready for a lawyer's review.";
+        newState.isComplete = true;
+      }
+    } else {
+      if (newState.step === 1) {
+        aiResponse = "To help me understand the legal context better, who is the other party involved in this situation?";
+        newState.missingInfo.push('Other party identity');
+      } else if (newState.step === 2) {
+        aiResponse = "What exactly happened leading up to this point?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Other party identity');
+        newState.missingInfo.push('Sequence of events');
+      } else if (newState.step === 3) {
+        aiResponse = "What outcome are you hoping for, and do you have any documents to support your version of events?";
+        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Sequence of events');
+        newState.missingInfo.push('Desired outcome', 'Supporting documents');
+      } else {
+        aiResponse = "Thank you for clarifying. I've put together a preliminary summary of your situation on the right.";
+        newState.isComplete = true;
+      }
+    }
+
+    setIntakeState(newState);
+    
+    if (newState.isComplete) {
+      setTriageSummary({
+        caseType: newState.category,
+        urgency: newState.urgency,
+        nextSteps: newState.actionList.map(a => a.action),
+        missingInfo: newState.missingInfo,
+        lawyerAdvisable: 'Recommended based on intake'
+      });
+    }
+
+    setChatHistory(prev => [...prev, { role: 'ai', type: 'text', text: aiResponse }]);
+  };
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!chatInput.trim()) return;
@@ -489,44 +702,10 @@ export default function App() {
     setChatHistory(prev => [...prev, { role: 'user', type: 'text', text: userText }]);
     setIsAnalyzing(true);
 
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: userText, history: chatHistory }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Backend error:', errorData);
-        throw new Error(`Failed to fetch from backend: ${errorData.details || errorData.error || response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      let docType: keyof typeof documentTypes = 'other';
-      if (documentTypes[data.docType as keyof typeof documentTypes]) {
-        docType = data.docType as keyof typeof documentTypes;
-      }
-
-      setChatHistory(prev => [
-        ...prev,
-        { role: 'ai', type: 'text', text: data.responseText }
-      ]);
-      
-      setSelectedDocType(docType);
-      setTriageSummary(data.summary);
-    } catch (error) {
-      console.error('Error calling chat API:', error);
-      setChatHistory(prev => [
-        ...prev,
-        { role: 'ai', type: 'text', text: 'Sorry, I encountered an error processing your request. Please try again.' }
-      ]);
-    } finally {
+    setTimeout(() => {
+      processSimulatedChat(userText);
       setIsAnalyzing(false);
-    }
+    }, 1000);
   };
 
   const handleEarlyAccessSubmit = (e: React.FormEvent) => {
@@ -867,6 +1046,7 @@ export default function App() {
                           )}
                         </motion.div>
                       ))}
+                      <div ref={chatEndRef} />
                       {isAnalyzing && (
                         <motion.div
                           initial={{ opacity: 0, y: 10 }}
@@ -1152,7 +1332,7 @@ export default function App() {
             <div className="flex flex-col gap-6 h-[650px]">
               <AnimatePresence mode="wait">
                 {activeTab === 'chatbot' ? (
-                  triageSummary ? (
+                  intakeState.step > 0 ? (
                     <motion.div
                       key="summary"
                       initial={{ opacity: 0, x: 20 }}
@@ -1167,60 +1347,122 @@ export default function App() {
                           <h3 className="text-lg font-medium text-slate-900">Intake Summary</h3>
                         </div>
                         <span className={`px-3 py-1 rounded-full text-xs font-semibold border tracking-wide uppercase ${
-                          triageSummary.urgency === 'Critical' ? 'bg-purple-500/20 border-red-500/30 text-purple-500' :
-                          triageSummary.urgency === 'High' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
-                          triageSummary.urgency === 'Medium' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600' :
-                          'bg-emerald-50 border-emerald-200 text-emerald-600'
+                          intakeState.urgency === 'Critical' ? 'bg-purple-500/20 border-red-500/30 text-purple-500' :
+                          intakeState.urgency === 'High' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
+                          intakeState.urgency === 'Medium' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600' :
+                          'bg-slate-100 border-slate-200 text-slate-500'
                         }`}>
-                          {triageSummary.urgency} Priority
+                          {intakeState.urgency}
                         </span>
                       </div>
 
                       <div className="space-y-6 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                        <div className="bg-white/50 rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
+                        {/* Status Label */}
+                        <div className="flex items-center gap-2 text-sm text-purple-600 bg-purple-50 px-3 py-2 rounded-lg border border-purple-100">
+                          <Sparkles className="w-4 h-4 animate-pulse" />
+                          {intakeState.isComplete ? 'Intake Complete' : 'Collecting case facts...'}
+                        </div>
+
+                        {/* Category */}
+                        <div className="bg-white/50 rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden">
                           <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-purple-500 to-indigo-600" />
-                          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-1">Classification</p>
-                          <p className="text-lg text-slate-900 font-medium">{triageSummary.caseType}</p>
+                          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-1">Likely Legal Category</p>
+                          <p className="text-base text-slate-900 font-medium">{intakeState.category}</p>
                         </div>
 
-                        <div className="bg-white/30 rounded-xl p-5 border border-slate-200 shadow-sm">
-                          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-4 flex items-center gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Action Plan Preview
-                          </p>
-                          <ul className="space-y-3">
-                            {triageSummary.nextSteps.slice(0, 2).map((step: string, i: number) => (
-                              <li key={i} className="flex items-start gap-3 text-sm text-slate-600 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                                <span className="w-6 h-6 rounded-full bg-purple-50 border border-slate-200 flex items-center justify-center shrink-0 text-xs text-slate-500 font-medium">{i + 1}</span>
-                                <span className="pt-0.5 leading-relaxed">{step}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+                        {/* Facts Collected */}
+                        {intakeState.facts.length > 0 && (
+                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm">
+                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-indigo-500" /> Facts Collected
+                            </p>
+                            <ul className="space-y-3">
+                              {intakeState.facts.map((fact, i) => (
+                                <li key={i} className="text-sm text-slate-600 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                                  <div className="flex justify-between items-start mb-1">
+                                    <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{fact.label}</span>
+                                    <span className="text-[10px] text-slate-400">{fact.source}</span>
+                                  </div>
+                                  <span className="leading-relaxed">{fact.text}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
 
-                        <div className="bg-white/30 rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
-                          <div className="absolute top-0 left-0 w-1 h-full bg-amber-500/50" />
-                          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
-                            <AlertCircle className="w-4 h-4 text-amber-500" /> Information Gaps
-                          </p>
-                          <ul className="space-y-2">
-                            {triageSummary.missingInfo.slice(0, 2).map((info: string, i: number) => (
-                              <li key={i} className="flex items-start gap-2 text-sm text-slate-500">
-                                <div className="w-1.5 h-1.5 rounded-full bg-amber-500/50 shrink-0 mt-2" />
-                                <span className="leading-relaxed">{info}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+                        {/* Missing Information */}
+                        {intakeState.missingInfo.length > 0 && (
+                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-amber-500/50" />
+                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
+                              <AlertCircle className="w-4 h-4 text-amber-500" /> Information Gaps
+                            </p>
+                            <ul className="space-y-2">
+                              {intakeState.missingInfo.map((info, i) => (
+                                <li key={i} className="flex items-start gap-2 text-sm text-slate-500">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500/50 shrink-0 mt-2" />
+                                  <span className="leading-relaxed">{info}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
 
-                        <div className="pt-2 flex flex-col gap-3">
-                          <button 
-                            onClick={() => setIsPacketModalOpen(true)}
-                            className="w-full py-3.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-sm font-medium rounded-xl shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] transition-all flex items-center justify-center gap-2"
-                          >
-                            <FileText className="w-4 h-4" />
-                            Open Detailed Intake Packet
-                          </button>
-                        </div>
+                        {/* Action List */}
+                        {intakeState.actionList.length > 0 && (
+                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm">
+                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Dynamic Action List
+                            </p>
+                            <ul className="space-y-3">
+                              {intakeState.actionList.map((action, i) => (
+                                <li key={i} className="text-sm text-slate-600 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                                  <p className="font-medium text-slate-900 mb-1">{action.action}</p>
+                                  <p className="text-xs text-slate-500">{action.reason}</p>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Timeline */}
+                        {intakeState.timeline.length > 0 && (
+                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm">
+                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
+                              <Clock className="w-4 h-4 text-blue-500" /> Automated Chronology
+                            </p>
+                            <div className="space-y-3 relative before:absolute before:inset-0 before:ml-2 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                              {intakeState.timeline.map((event, i) => (
+                                <div key={i} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                                  <div className="flex items-center justify-center w-4 h-4 rounded-full border border-white bg-slate-300 group-[.is-active]:bg-blue-500 text-slate-500 group-[.is-active]:text-blue-50 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2"></div>
+                                  <div className="w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] p-2 rounded border border-slate-200 bg-white shadow-sm">
+                                    <div className="text-xs text-slate-600">{event}</div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* CTA Buttons */}
+                        {intakeState.isComplete && (
+                          <div className="pt-4 flex flex-col gap-3">
+                            <button 
+                              onClick={() => setIsPacketModalOpen(true)}
+                              className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-sm font-medium rounded-xl shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] transition-all flex items-center justify-center gap-2"
+                            >
+                              <FileText className="w-4 h-4" />
+                              View Full Summary
+                            </button>
+                            <button 
+                              onClick={() => setShowLawyerModal(true)}
+                              className="w-full py-3 px-4 bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50 text-slate-700 text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2"
+                            >
+                              <Briefcase className="w-4 h-4" />
+                              Continue to Teleconsultation
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </motion.div>
                   ) : (
@@ -1232,13 +1474,13 @@ export default function App() {
                       transition={{ duration: 0.3 }}
                       className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-8 flex-1 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-[0_8px_40px_rgb(147,51,234,0.08)]"
                     >
-                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(220,38,38,0.05),transparent_70%)]" />
+                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(147,51,234,0.05),transparent_70%)]" />
                       <div className="w-20 h-20 rounded-[2rem] bg-white/60 backdrop-blur-md border border-white/80 shadow-[0_8px_30px_rgba(147,51,234,0.08)] flex items-center justify-center mb-6 relative z-10 overflow-hidden">
                         <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10" />
                         <div className="absolute inset-0 rounded-[2rem] border border-purple-500/20 animate-ping opacity-20" />
                         <MessageSquare className="w-10 h-10 text-purple-400 relative z-10" />
                       </div>
-                      <h3 className="text-xl font-medium text-slate-900 mb-3 z-10">Intake Summary Pending</h3>
+                      <h3 className="text-xl font-medium text-slate-900 mb-3 z-10">Intake in progress</h3>
                       <p className="text-sm text-slate-500 max-w-sm leading-relaxed z-10">
                         Describe your legal issue to generate a structured intake summary, identify critical deadlines, and prepare an action plan.
                       </p>
