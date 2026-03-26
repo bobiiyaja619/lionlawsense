@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 
 async function startServer() {
@@ -8,6 +8,10 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', hasKey: !!process.env.GEMINI_API_KEY });
+  });
 
   // API Route for Gemini Chat
   app.post('/api/chat', async (req, res) => {
@@ -50,18 +54,18 @@ Return a JSON object with the following structure:
           systemInstruction,
           responseMimeType: 'application/json',
           responseSchema: {
-            type: Type.OBJECT,
+            type: "OBJECT",
             properties: {
-              responseText: { type: Type.STRING },
-              docType: { type: Type.STRING },
+              responseText: { type: "STRING" },
+              docType: { type: "STRING" },
               summary: {
-                type: Type.OBJECT,
+                type: "OBJECT",
                 properties: {
-                  caseType: { type: Type.STRING },
-                  urgency: { type: Type.STRING },
-                  nextSteps: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  missingInfo: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  lawyerAdvisable: { type: Type.STRING }
+                  caseType: { type: "STRING" },
+                  urgency: { type: "STRING" },
+                  nextSteps: { type: "ARRAY", items: { type: "STRING" } },
+                  missingInfo: { type: "ARRAY", items: { type: "STRING" } },
+                  lawyerAdvisable: { type: "STRING" }
                 },
                 required: ["caseType", "urgency", "nextSteps", "missingInfo", "lawyerAdvisable"]
               }
@@ -76,12 +80,18 @@ Return a JSON object with the following structure:
         throw new Error("No response text from Gemini");
       }
 
-      const result = JSON.parse(resultText);
+      // Extract JSON block if wrapped in markdown
+      let cleanJsonText = resultText.trim();
+      const jsonMatch = cleanJsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        cleanJsonText = jsonMatch[1].trim();
+      }
+      const result = JSON.parse(cleanJsonText);
       res.json(result);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in /api/chat:', error);
-      res.status(500).json({ error: 'Failed to process chat request' });
+      res.status(500).json({ error: 'Failed to process chat request', details: error.message || String(error) });
     }
   });
 

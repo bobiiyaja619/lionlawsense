@@ -499,7 +499,9 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch from backend');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Backend error:', errorData);
+        throw new Error(`Failed to fetch from backend: ${errorData.details || errorData.error || response.statusText}`);
       }
 
       const data = await response.json();

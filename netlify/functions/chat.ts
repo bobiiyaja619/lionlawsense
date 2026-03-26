@@ -1,5 +1,5 @@
 import { Handler } from '@netlify/functions';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 
 export const handler: Handler = async (event, context) => {
   // CORS headers
@@ -60,18 +60,18 @@ Return a JSON object with the following structure:
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: {
-          type: Type.OBJECT,
+          type: "OBJECT",
           properties: {
-            responseText: { type: Type.STRING },
-            docType: { type: Type.STRING },
+            responseText: { type: "STRING" },
+            docType: { type: "STRING" },
             summary: {
-              type: Type.OBJECT,
+              type: "OBJECT",
               properties: {
-                caseType: { type: Type.STRING },
-                urgency: { type: Type.STRING },
-                nextSteps: { type: Type.ARRAY, items: { type: Type.STRING } },
-                missingInfo: { type: Type.ARRAY, items: { type: Type.STRING } },
-                lawyerAdvisable: { type: Type.STRING }
+                caseType: { type: "STRING" },
+                urgency: { type: "STRING" },
+                nextSteps: { type: "ARRAY", items: { type: "STRING" } },
+                missingInfo: { type: "ARRAY", items: { type: "STRING" } },
+                lawyerAdvisable: { type: "STRING" }
               },
               required: ["caseType", "urgency", "nextSteps", "missingInfo", "lawyerAdvisable"]
             }
@@ -86,10 +86,18 @@ Return a JSON object with the following structure:
       throw new Error("No response text from Gemini");
     }
 
+    // Extract JSON block if wrapped in markdown
+    let cleanJsonText = resultText.trim();
+    const jsonMatch = cleanJsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      cleanJsonText = jsonMatch[1].trim();
+    }
+    const result = JSON.parse(cleanJsonText);
+
     return {
       statusCode: 200,
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: resultText
+      body: JSON.stringify(result)
     };
 
   } catch (error) {
