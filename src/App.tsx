@@ -1,22 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-
-type FlowType = 'initial' | 'tenancy' | 'employment' | 'family' | 'contract' | 'notice' | 'clarifying';
-
-interface IntakeState {
-  flow: FlowType;
-  step: number;
-  category: string;
-  urgency: string;
-  urgencyReason: string;
-  facts: { text: string; source: string; label: string }[];
-  missingInfo: string[];
-  suggestedDocs: string[];
-  actionList: { action: string; reason: string }[];
-  timeline: string[];
-  isComplete: boolean;
-}
-
 import {
   Scale,
   Clock,
@@ -55,284 +38,186 @@ import {
   Sparkles,
   Play,
   Building,
-  Compass
+  Compass,
+  ListChecks,
+  FileCheck,
+  AlertTriangle,
+  Activity,
+  CalendarDays,
+  FileQuestion,
+  FileWarning,
+  CheckCircle,
+  XCircle,
+  HelpCircle,
+  ChevronUp,
+  ExternalLink
 } from 'lucide-react';
 
 const documentTypes = {
   fine_notice: {
     label: 'Fine Notice',
-    aiResponse: 'Document received and analyzed.\n\nClassification: Regulatory Fine / Liability Notice\n\nInitial Assessment: This document indicates a potential liability for a regulatory or parking offense. Time-sensitive action may be required to preserve your right to appeal.\n\nRecommended Immediate Actions:\n• Verify the identity of the legally liable party.\n• Identify any stated appeal deadlines.\n• Do not make payment if you intend to dispute, as this may be construed as an admission of liability.',
+    aiResponse: 'Document received and analyzed. I see this is a fine notice. To help me structure your case, could you tell me if you are the legally liable party named in the notice?',
     summary: {
       caseType: 'Regulatory Fine / Liability',
       urgency: 'Medium',
-      nextSteps: [
-        'Confirm legally liable party',
-        'Gather ownership evidence',
-        'Check appeal deadline',
-        'Decide on dispute vs payment'
+      status: 'Collecting Facts',
+      factsCollected: [
+        { fact: 'Fine notice received', source: 'From uploaded document' }
       ],
+      timelineEvents: [
+        { date: 'Recent', event: 'Notice issued', significance: 'Starts the clock for appeal or payment' }
+      ],
+      documentsUploaded: ['Fine Notice'],
+      missingDocuments: ['Proof of payment (if any)', 'Correspondence with issuing authority'],
+      recommendedActions: [
+        { title: 'Confirm legally liable party', reason: 'Determines who is responsible for the fine.' },
+        { title: 'Check appeal deadline', reason: 'Missing the deadline may result in additional penalties.' }
+      ],
+      readinessScore: 40,
       missingInfo: [
         'Identity of issuing party',
         'Deadline confirmation',
-        'Related correspondence'
+        'User intent (dispute vs pay)'
       ],
       lawyerAdvisable: 'Optional - unless fine is substantial or involves criminal liability'
-    },
-    packetData: {
-      timeline: [
-        'Notice received on 12 Feb 2026',
-        'User submitted supporting explanation',
-        'Payment / response deadline identified',
-        'Escalation decision pending'
-      ],
-      questions: [
-        'Am I legally liable under this notice?',
-        'Is there a basis to dispute this claim?',
-        'What happens if I do not respond by the deadline?',
-        'What evidence will strengthen my position?'
-      ],
-      checklist: [
-        'Relevant correspondence',
-        'Receipts / payment proof',
-        'Screenshots / photos',
-        'Identity of issuing party'
-      ],
-      nextActions: [
-        'Prepare appeal or dispute response',
-        'Gather supporting documents',
-        'Book lawyer consultation',
-        'Monitor for response deadline'
-      ]
     }
   },
   demand_letter: {
     label: 'Demand Letter',
-    aiResponse: 'Document received and analyzed.\n\nClassification: Formal Legal Demand / Pre-Action Notice\n\nInitial Assessment: This is a formal demand letter indicating that the sender intends to pursue legal action if their demands are not met. Ignoring this document may result in default judgment.\n\nRecommended Immediate Actions:\n• Note the exact response deadline stipulated in the letter.\n• Do not contact the sender directly without legal counsel.\n• Preserve all related communications and contracts.',
+    aiResponse: 'Document received and analyzed. This is a formal demand letter. To guide you properly, could you let me know if you have already responded to this letter or contacted the sender?',
     summary: {
       caseType: 'Formal Legal Demand',
       urgency: 'High',
-      nextSteps: [
-        'Do not ignore the notice',
-        'Check response deadline',
-        'Gather supporting communications',
-        'Consider lawyer escalation'
+      status: 'Collecting Facts',
+      factsCollected: [
+        { fact: 'Demand letter received', source: 'From uploaded document' }
       ],
+      timelineEvents: [
+        { date: 'Recent', event: 'Demand letter received', significance: 'Initiates pre-action protocol' }
+      ],
+      documentsUploaded: ['Demand Letter'],
+      missingDocuments: ['Original contract or agreement', 'Proof of prior payments/communications'],
+      recommendedActions: [
+        { title: 'Do not ignore the notice', reason: 'Ignoring may lead to default judgment.' },
+        { title: 'Check response deadline', reason: 'Crucial for timely response.' }
+      ],
+      readinessScore: 30,
       missingInfo: [
         'Original contract or agreement',
         'Proof of prior payments/communications',
         'Counter-claim evidence'
       ],
       lawyerAdvisable: 'Highly Recommended - to draft a formal response and avoid default judgment'
-    },
-    packetData: {
-      timeline: [
-        'Demand letter received',
-        'Initial AI triage completed',
-        'Pending lawyer review and consultation',
-        'Response/Action deadline (TBC)'
-      ],
-      questions: [
-        'Are the claims in the demand letter legally valid?',
-        'What is the best strategy to respond without admitting liability?',
-        'What are the costs of defending against this claim?',
-        'Can we negotiate a settlement before court action?'
-      ],
-      checklist: [
-        'Original contract or agreement',
-        'Proof of prior payments/communications',
-        'Counter-claim evidence',
-        'Identity documents of involved parties'
-      ],
-      nextActions: [
-        'Draft formal response letter',
-        'Gather supporting communications',
-        'Book lawyer consultation',
-        'Do not contact sender directly'
-      ]
     }
   },
   court_notice: {
     label: 'Court Notice',
-    aiResponse: 'Document received and analyzed.\n\nClassification: Active Court Proceedings / Summons\n\nInitial Assessment: This document confirms that formal legal proceedings have been initiated against you. Strict procedural deadlines now apply.\n\nRecommended Immediate Actions:\n• Identify the date, time, and venue of the hearing or deadline.\n• Prepare to file a Memorandum of Appearance or Defense.\n• Retain legal representation immediately to navigate court procedures.',
+    aiResponse: 'Document received and analyzed. This is a court summons, which is highly time-sensitive. Could you confirm the date of the hearing or the deadline to file a Memorandum of Appearance?',
     summary: {
       caseType: 'Active Court Proceedings',
       urgency: 'Critical',
-      nextSteps: [
-        'Note hearing date and venue',
-        'Identify nature of the claim',
-        'File Memorandum of Appearance',
-        'Seek legal representation'
+      status: 'Collecting Facts',
+      factsCollected: [
+        { fact: 'Court summons received', source: 'From uploaded document' }
       ],
+      timelineEvents: [
+        { date: 'Recent', event: 'Court summons issued', significance: 'Formal legal proceedings have commenced' }
+      ],
+      documentsUploaded: ['Court Notice'],
+      missingDocuments: ['Full Statement of Claim', 'Supporting evidence for defense'],
+      recommendedActions: [
+        { title: 'Note hearing date and venue', reason: 'Failure to appear may result in default judgment.' },
+        { title: 'Seek legal representation', reason: 'Navigating court procedures requires professional help.' }
+      ],
+      readinessScore: 20,
       missingInfo: [
+        'Hearing date',
         'Full Statement of Claim',
-        'Supporting evidence for defense',
         'Chronology of events'
       ],
       lawyerAdvisable: 'Mandatory - navigating court procedures requires professional representation'
-    },
-    packetData: {
-      timeline: [
-        'Court summons received',
-        'Initial AI triage completed',
-        'Pending lawyer review and consultation',
-        'Hearing date / Appearance deadline (TBC)'
-      ],
-      questions: [
-        'What are the immediate deadlines I must meet?',
-        'What happens if I miss the hearing date?',
-        'What are my options for defense or settlement?',
-        'How much will legal representation cost for this proceeding?'
-      ],
-      checklist: [
-        'Full Statement of Claim',
-        'Supporting evidence for defense',
-        'Chronology of events',
-        'Identity documents of involved parties'
-      ],
-      nextActions: [
-        'Note hearing date and venue',
-        'File Memorandum of Appearance',
-        'Book lawyer consultation immediately',
-        'Do not ignore the summons'
-      ]
     }
   },
   tenancy_agreement: {
     label: 'Tenancy Agreement',
-    aiResponse: 'Document received and analyzed.\n\nClassification: Tenancy / Lease Agreement\n\nInitial Assessment: This document governs the legal relationship between landlord and tenant. Disputes typically center around termination, deposits, or maintenance obligations.\n\nRecommended Immediate Actions:\n• Identify the specific clause relevant to your dispute.\n• Review notice period requirements and diplomatic clauses.\n• Compile inventory lists and condition reports from move-in/move-out.',
+    aiResponse: 'Document received and analyzed. I see this is a tenancy agreement. What specific issue are you facing with your landlord or tenant (e.g., deposit withholding, early termination)?',
     summary: {
       caseType: 'Tenancy / Lease Dispute',
       urgency: 'Medium',
-      nextSteps: [
-        'Identify disputed clause',
-        'Check notice period',
-        'Review diplomatic clause',
-        'Gather inventory lists'
+      status: 'Collecting Facts',
+      factsCollected: [
+        { fact: 'Tenancy agreement uploaded', source: 'From uploaded document' }
       ],
+      timelineEvents: [
+        { date: 'Unknown', event: 'Tenancy commenced', significance: 'Establishes landlord-tenant relationship' }
+      ],
+      documentsUploaded: ['Tenancy Agreement'],
+      missingDocuments: ['Move-in/Move-out condition reports', 'Correspondence with landlord/agent'],
+      recommendedActions: [
+        { title: 'Identify disputed clause', reason: 'Determines legal rights and obligations.' },
+        { title: 'Check notice period', reason: 'Important for termination disputes.' }
+      ],
+      readinessScore: 35,
       missingInfo: [
+        'Nature of the dispute',
         'Move-in/Move-out condition reports',
-        'Photographic evidence of property',
-        'Correspondence with landlord/agent'
+        'Photographic evidence of property'
       ],
       lawyerAdvisable: 'Recommended - if the deposit amount is large or eviction is threatened'
-    },
-    packetData: {
-      timeline: [
-        'Tenancy agreement uploaded',
-        'Initial AI triage completed',
-        'Pending lawyer review and consultation',
-        'Notice period / Termination date (TBC)'
-      ],
-      questions: [
-        'Is the landlord entitled to withhold my deposit?',
-        'Can I terminate the lease early under the diplomatic clause?',
-        'Who is responsible for the repair costs?',
-        'What are my rights if the landlord threatens eviction?'
-      ],
-      checklist: [
-        'Move-in/Move-out condition reports',
-        'Photographic evidence of property',
-        'Correspondence with landlord/agent',
-        'Receipts for repairs/maintenance'
-      ],
-      nextActions: [
-        'Identify disputed clause in agreement',
-        'Gather inventory lists and photos',
-        'Book lawyer consultation',
-        'Communicate with landlord in writing'
-      ]
     }
   },
   contract: {
     label: 'Contract',
-    aiResponse: 'Document received and analyzed.\n\nClassification: Commercial Contract\n\nInitial Assessment: This is a binding commercial agreement. To evaluate a potential breach, the specific obligations and limitation clauses must be reviewed.\n\nRecommended Immediate Actions:\n• Pinpoint the exact obligation that was allegedly breached.\n• Review termination, dispute resolution, and limitation of liability clauses.\n• Compile evidence demonstrating performance or non-performance.',
+    aiResponse: 'Document received and analyzed. This is a commercial contract. To help me understand the situation, could you describe the specific obligation that you believe has been breached?',
     summary: {
       caseType: 'Commercial Contract Dispute',
       urgency: 'Medium',
-      nextSteps: [
-        'Pinpoint breached obligation',
-        'Review termination clauses',
-        'Check limitation of liability',
-        'Compile performance evidence'
+      status: 'Collecting Facts',
+      factsCollected: [
+        { fact: 'Commercial contract uploaded', source: 'From uploaded document' }
       ],
+      timelineEvents: [
+        { date: 'Unknown', event: 'Contract signed', significance: 'Establishes contractual obligations' }
+      ],
+      documentsUploaded: ['Contract'],
+      missingDocuments: ['Amendments or side letters', 'Written notices of breach'],
+      recommendedActions: [
+        { title: 'Pinpoint breached obligation', reason: 'Core of the contract dispute.' },
+        { title: 'Review termination clauses', reason: 'Determines options for ending the contract.' }
+      ],
+      readinessScore: 30,
       missingInfo: [
+        'Nature of the breach',
         'Amendments or side letters',
-        'Proof of delivery/payment',
-        'Written notices of breach'
+        'Proof of delivery/payment'
       ],
       lawyerAdvisable: 'Highly Recommended - to enforce terms or defend against breach claims'
-    },
-    packetData: {
-      timeline: [
-        'Contract uploaded',
-        'Initial AI triage completed',
-        'Pending lawyer review and consultation',
-        'Breach notification deadline (TBC)'
-      ],
-      questions: [
-        'Has a material breach of contract occurred?',
-        'What are the remedies available under the contract?',
-        'Are the limitation of liability clauses enforceable?',
-        'What is the process for dispute resolution?'
-      ],
-      checklist: [
-        'Amendments or side letters',
-        'Proof of delivery/payment',
-        'Written notices of breach',
-        'Correspondence regarding performance'
-      ],
-      nextActions: [
-        'Pinpoint breached obligation',
-        'Compile performance evidence',
-        'Book lawyer consultation',
-        'Review dispute resolution clause'
-      ]
     }
   },
   other: {
     label: 'Other Legal Document',
-    aiResponse: 'Document received and analyzed.\n\nClassification: Uncategorized Legal Document\n\nInitial Assessment: To provide an accurate legal triage, additional contextual information is required regarding the nature of the dispute and the parties involved.\n\nRecommended Immediate Actions:\n• Summarize the main issue and your desired outcome.\n• Identify all parties involved in the matter.\n• Organize any related correspondence or supplementary documents.',
+    aiResponse: 'Document received and analyzed. To provide an accurate legal triage, could you summarize the main issue and your desired outcome?',
     summary: {
       caseType: 'Uncategorized Legal Matter',
       urgency: 'Unknown',
-      nextSteps: [
-        'Summarize the main issue',
-        'Identify parties involved',
-        'State desired outcome',
-        'Organize related documents'
+      status: 'Collecting Facts',
+      factsCollected: [
+        { fact: 'Document uploaded', source: 'From uploaded document' }
       ],
+      timelineEvents: [],
+      documentsUploaded: ['Uploaded Document'],
+      missingDocuments: ['Related correspondence', 'Supplementary documents'],
+      recommendedActions: [
+        { title: 'Summarize the main issue', reason: 'Needed to classify the case.' },
+        { title: 'Identify parties involved', reason: 'Needed to understand the dispute.' }
+      ],
+      readinessScore: 10,
       missingInfo: [
         'Context of the dispute',
         'Timeline of events',
         'Specific legal questions'
       ],
       lawyerAdvisable: 'Advisable - to properly classify and strategize your case'
-    },
-    packetData: {
-      timeline: [
-        'Document uploaded',
-        'Initial AI triage completed',
-        'Pending lawyer review and consultation',
-        'Next steps to be determined'
-      ],
-      questions: [
-        'What are my legal rights and obligations in this situation?',
-        'What is the best course of action to achieve my desired outcome?',
-        'What are the potential risks and liabilities?',
-        'How much will legal representation cost?'
-      ],
-      checklist: [
-        'Context of the dispute',
-        'Timeline of events',
-        'Specific legal questions',
-        'Identity documents of involved parties'
-      ],
-      nextActions: [
-        'Summarize the main issue',
-        'Organize related documents',
-        'Book lawyer consultation',
-        'Identify parties involved'
-      ]
     }
   }
 };
@@ -356,31 +241,15 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [intakeState, setIntakeState] = useState<IntakeState>({
-    flow: 'initial',
-    step: 0,
-    category: 'Detecting...',
-    urgency: 'Pending Assessment',
-    urgencyReason: '',
-    facts: [],
-    missingInfo: [],
-    suggestedDocs: [],
-    actionList: [],
-    timeline: [],
-    isComplete: false,
-  });
   const [triageSummary, setTriageSummary] = useState<any>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory]);
+  const [isIntakeComplete, setIsIntakeComplete] = useState(false);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [earlyAccessSubmitted, setEarlyAccessSubmitted] = useState(false);
   const [isPacketGenerated, setIsPacketGenerated] = useState(false);
   const [isPacketModalOpen, setIsPacketModalOpen] = useState(false);
   const [isGeneratingPacket, setIsGeneratingPacket] = useState(false);
+  const [selectedSummarySection, setSelectedSummarySection] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [showLawyerModal, setShowLawyerModal] = useState(false);
   const [isUrgentCallModalOpen, setIsUrgentCallModalOpen] = useState(false);
@@ -514,184 +383,6 @@ export default function App() {
     }
   };
 
-  const processSimulatedChat = (text: string) => {
-    const lowerText = text.toLowerCase();
-    let newState = { ...intakeState };
-    let aiResponse = '';
-
-    // 1. Determine flow if initial
-    if (newState.flow === 'initial') {
-      if (lowerText.match(/landlord|tenancy|deposit|rent|eviction/)) {
-        newState.flow = 'tenancy';
-        newState.category = 'Tenancy & Lease Dispute';
-        newState.suggestedDocs = ['Tenancy Agreement', 'Handover condition report'];
-      } else if (lowerText.match(/employer|salary|termination|dismissal|cpf/)) {
-        newState.flow = 'employment';
-        newState.category = 'Employment Dispute';
-        newState.suggestedDocs = ['Employment Contract', 'Payslips', 'CPF Statements'];
-      } else if (lowerText.match(/divorce|maintenance|child|protection/)) {
-        newState.flow = 'family';
-        newState.category = 'Family & Matrimonial';
-        newState.suggestedDocs = ['Marriage Certificate', 'Relevant Court Orders'];
-      } else if (lowerText.match(/vendor|contract|invoice|client|breach/)) {
-        newState.flow = 'contract';
-        newState.category = 'SME / Contract Dispute';
-        newState.suggestedDocs = ['Signed Contract', 'Invoices', 'Correspondence'];
-      } else if (lowerText.match(/demand letter|fine|notice|summons/)) {
-        newState.flow = 'notice';
-        newState.category = 'Formal Notice / Summons';
-        newState.suggestedDocs = ['The Notice/Summons Document', 'Prior correspondence'];
-      } else {
-        newState.flow = 'clarifying';
-        newState.category = 'General Inquiry';
-      }
-    }
-
-    // 2. Extract facts and update urgency
-    if (lowerText.match(/urgent|today|tomorrow|deadline|court|summons|eviction/)) {
-      newState.urgency = 'High';
-      newState.urgencyReason = 'Mention of immediate deadline or severe action.';
-    } else if (newState.urgency === 'Pending Assessment' && newState.step > 0) {
-      newState.urgency = 'Medium';
-      newState.urgencyReason = 'Standard assessment based on initial facts.';
-    }
-
-    if (text.length > 5) {
-      newState.facts.push({
-        text: text.substring(0, 80) + (text.length > 80 ? '...' : ''),
-        source: 'From user statement',
-        label: 'User-stated'
-      });
-    }
-
-    const dateMatch = text.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2}|\d{1,2} (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|\d{1,2}\/\d{1,2}\/\d{2,4}/i);
-    if (dateMatch) {
-      newState.timeline.push(`Event reported around ${dateMatch[0]}`);
-    } else if (newState.step === 0) {
-      newState.timeline.push('Initial issue reported');
-    }
-
-    // 3. Generate next question
-    newState.step += 1;
-
-    if (newState.flow === 'tenancy') {
-      if (newState.step === 1) {
-        aiResponse = "I understand you're dealing with a tenancy issue. To help me assess the situation under Singapore's tenancy context, is there a written tenancy agreement in place?";
-        newState.missingInfo.push('Written agreement status');
-      } else if (newState.step === 2) {
-        aiResponse = "Got it. What exactly is the dispute about? Is it regarding the security deposit, repairs, unpaid rent, or an eviction threat?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Written agreement status');
-        newState.missingInfo.push('Core dispute details');
-        newState.actionList.push({ action: 'Locate Tenancy Agreement', reason: 'It helps verify the obligations and deposit terms relevant to your dispute.' });
-      } else if (newState.step === 3) {
-        aiResponse = "I see. Has the landlord or agent given any written explanation or formal notice? Do you have receipts, photos, or chat records to support your position?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Core dispute details');
-        newState.missingInfo.push('Evidence availability');
-      } else {
-        aiResponse = "Thank you for sharing those details. I have enough information to generate a preliminary intake summary for your lawyer. Please review the summary on the right.";
-        newState.isComplete = true;
-      }
-    } else if (newState.flow === 'employment') {
-      if (newState.step === 1) {
-        aiResponse = "This sounds like an employment matter. Under the Employment Act context, are you the employee or the employer in this situation?";
-        newState.missingInfo.push('Party role (Employee/Employer)');
-      } else if (newState.step === 2) {
-        aiResponse = "Understood. What specifically happened? Are we looking at unpaid salary, unfair dismissal, workplace harassment, or a benefits issue?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Party role (Employee/Employer)');
-        newState.missingInfo.push('Specific incident details');
-        newState.actionList.push({ action: 'Gather Employment Contract & Payslips', reason: 'Crucial for verifying your employment terms and salary claims.' });
-      } else if (newState.step === 3) {
-        aiResponse = "Was anything communicated in writing regarding this issue? Also, is there an urgent deadline, or have you already approached TADM (Tripartite Alliance for Dispute Management)?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Specific incident details');
-        newState.missingInfo.push('Written communications', 'TADM status');
-      } else {
-        aiResponse = "Thank you. I've gathered the key facts. I will now finalize your intake summary which you can use for a consultation or when filing a claim.";
-        newState.isComplete = true;
-      }
-    } else if (newState.flow === 'family') {
-      if (newState.step === 1) {
-        aiResponse = "I'm sorry to hear you're going through this. For family matters in Singapore, what is the main issue: divorce proceedings, child arrangements, maintenance, or personal protection?";
-        newState.missingInfo.push('Main family issue');
-      } else if (newState.step === 2) {
-        aiResponse = "Has any formal court process already started, or are you looking to initiate one? Are there children involved?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Main family issue');
-        newState.missingInfo.push('Court process status', 'Children involvement');
-        newState.actionList.push({ action: 'Prepare Marriage Certificate & Children\'s Birth Certificates', reason: 'Standard required documents for Family Justice Courts.' });
-      } else if (newState.step === 3) {
-        aiResponse = "Do you have any formal documents, notices, or evidence of the issues you mentioned (e.g., financial records for maintenance)?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Court process status');
-        newState.missingInfo.push('Supporting evidence');
-      } else {
-        aiResponse = "Thank you for providing this sensitive information. Your intake summary is ready on the right, which will help a family lawyer understand your situation quickly.";
-        newState.isComplete = true;
-      }
-    } else if (newState.flow === 'contract') {
-      if (newState.step === 1) {
-        aiResponse = "This appears to be a commercial or contract dispute. Is the other party a client, vendor, employee, or business partner?";
-        newState.missingInfo.push('Counterparty relationship');
-      } else if (newState.step === 2) {
-        aiResponse = "Is there a signed agreement or contract in place? What is the core issue: non-payment, breach of terms, delay, or termination?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Counterparty relationship');
-        newState.missingInfo.push('Contract status', 'Core breach details');
-        newState.actionList.push({ action: 'Organize Invoices and Correspondence', reason: 'Establishes the timeline of the transaction and the dispute.' });
-      } else if (newState.step === 3) {
-        aiResponse = "Do you have supporting documents like invoices or emails? Is there any immediate financial exposure or deadline pressure we should note?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Contract status');
-        newState.missingInfo.push('Financial exposure', 'Deadlines');
-      } else {
-        aiResponse = "Got it. I have compiled the facts into a structured summary for your commercial dispute. Please review it on the right.";
-        newState.isComplete = true;
-      }
-    } else if (newState.flow === 'notice') {
-      if (newState.step === 1) {
-        aiResponse = "Receiving a formal notice can be stressful. Who is the notice from, and what exactly are they demanding or alleging?";
-        newState.missingInfo.push('Issuing party', 'Demands/Allegations');
-      } else if (newState.step === 2) {
-        aiResponse = "Is there a specific deadline stated in the document to respond or make payment?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Issuing party');
-        newState.missingInfo.push('Response deadline');
-        newState.actionList.push({ action: 'Confirm Response Deadline', reason: 'Missing a formal deadline can lead to default judgments or further penalties.' });
-      } else if (newState.step === 3) {
-        aiResponse = "Do you have any documents or evidence that contradict their claims? What outcome are you hoping for?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Response deadline');
-        newState.missingInfo.push('Defense evidence', 'Desired outcome');
-      } else {
-        aiResponse = "Thank you. I've assessed the notice details. Your intake summary is prepared and ready for a lawyer's review.";
-        newState.isComplete = true;
-      }
-    } else {
-      if (newState.step === 1) {
-        aiResponse = "To help me understand the legal context better, who is the other party involved in this situation?";
-        newState.missingInfo.push('Other party identity');
-      } else if (newState.step === 2) {
-        aiResponse = "What exactly happened leading up to this point?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Other party identity');
-        newState.missingInfo.push('Sequence of events');
-      } else if (newState.step === 3) {
-        aiResponse = "What outcome are you hoping for, and do you have any documents to support your version of events?";
-        newState.missingInfo = newState.missingInfo.filter(i => i !== 'Sequence of events');
-        newState.missingInfo.push('Desired outcome', 'Supporting documents');
-      } else {
-        aiResponse = "Thank you for clarifying. I've put together a preliminary summary of your situation on the right.";
-        newState.isComplete = true;
-      }
-    }
-
-    setIntakeState(newState);
-    
-    if (newState.isComplete) {
-      setTriageSummary({
-        caseType: newState.category,
-        urgency: newState.urgency,
-        nextSteps: newState.actionList.map(a => a.action),
-        missingInfo: newState.missingInfo,
-        lawyerAdvisable: 'Recommended based on intake'
-      });
-    }
-
-    setChatHistory(prev => [...prev, { role: 'ai', type: 'text', text: aiResponse }]);
-  };
-
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!chatInput.trim()) return;
@@ -702,10 +393,45 @@ export default function App() {
     setChatHistory(prev => [...prev, { role: 'user', type: 'text', text: userText }]);
     setIsAnalyzing(true);
 
-    setTimeout(() => {
-      processSimulatedChat(userText);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: userText, history: chatHistory }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Backend error:', errorData);
+        throw new Error(`Failed to fetch from backend: ${errorData.details || errorData.error || response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      let docType: keyof typeof documentTypes = 'other';
+      if (documentTypes[data.docType as keyof typeof documentTypes]) {
+        docType = data.docType as keyof typeof documentTypes;
+      }
+
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'ai', type: 'text', text: data.responseText }
+      ]);
+      
+      setSelectedDocType(docType);
+      setTriageSummary(data.summary);
+      setIsIntakeComplete(data.isComplete);
+    } catch (error) {
+      console.error('Error calling chat API:', error);
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'ai', type: 'text', text: 'Sorry, I encountered an error processing your request. Please try again.' }
+      ]);
+    } finally {
       setIsAnalyzing(false);
-    }, 1000);
+    }
   };
 
   const handleEarlyAccessSubmit = (e: React.FormEvent) => {
@@ -1046,7 +772,6 @@ export default function App() {
                           )}
                         </motion.div>
                       ))}
-                      <div ref={chatEndRef} />
                       {isAnalyzing && (
                         <motion.div
                           initial={{ opacity: 0, y: 10 }}
@@ -1332,7 +1057,7 @@ export default function App() {
             <div className="flex flex-col gap-6 h-[650px]">
               <AnimatePresence mode="wait">
                 {activeTab === 'chatbot' ? (
-                  intakeState.step > 0 ? (
+                  triageSummary ? (
                     <motion.div
                       key="summary"
                       initial={{ opacity: 0, x: 20 }}
@@ -1344,125 +1069,160 @@ export default function App() {
                       <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-200">
                         <div className="flex items-center gap-2">
                           <ShieldCheck className="w-5 h-5 text-emerald-500" />
-                          <h3 className="text-lg font-medium text-slate-900">Intake Summary</h3>
+                          <h3 className="text-lg font-medium text-slate-900">Case Overview</h3>
                         </div>
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold border tracking-wide uppercase ${
-                          intakeState.urgency === 'Critical' ? 'bg-purple-500/20 border-red-500/30 text-purple-500' :
-                          intakeState.urgency === 'High' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
-                          intakeState.urgency === 'Medium' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600' :
-                          'bg-slate-100 border-slate-200 text-slate-500'
-                        }`}>
-                          {intakeState.urgency}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border tracking-wide uppercase flex items-center gap-1 ${
+                            triageSummary.status === 'Ready for Review' || triageSummary.status === 'Complete' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-amber-50 border-amber-200 text-amber-600'
+                          }`}>
+                            {triageSummary.status === 'Ready for Review' || triageSummary.status === 'Complete' ? <CheckCircle className="w-3 h-3" /> : <Activity className="w-3 h-3 animate-pulse" />}
+                            {triageSummary.status}
+                          </span>
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border tracking-wide uppercase ${
+                            triageSummary.urgency === 'Critical' ? 'bg-purple-500/20 border-red-500/30 text-purple-500' :
+                            triageSummary.urgency === 'High' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
+                            triageSummary.urgency === 'Medium' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600' :
+                            'bg-emerald-50 border-emerald-200 text-emerald-600'
+                          }`}>
+                            {triageSummary.urgency} Priority
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="space-y-6 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                        {/* Status Label */}
-                        <div className="flex items-center gap-2 text-sm text-purple-600 bg-purple-50 px-3 py-2 rounded-lg border border-purple-100">
-                          <Sparkles className="w-4 h-4 animate-pulse" />
-                          {intakeState.isComplete ? 'Intake Complete' : 'Collecting case facts...'}
-                        </div>
-
-                        {/* Category */}
-                        <div className="bg-white/50 rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden">
+                      <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                        {/* Case Summary Card */}
+                        <button 
+                          onClick={() => setSelectedSummarySection('case_summary')}
+                          className="w-full text-left bg-white/50 hover:bg-white/80 rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden transition-all group"
+                        >
                           <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-purple-500 to-indigo-600" />
-                          <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-1">Likely Legal Category</p>
-                          <p className="text-base text-slate-900 font-medium">{intakeState.category}</p>
-                        </div>
-
-                        {/* Facts Collected */}
-                        {intakeState.facts.length > 0 && (
-                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm">
-                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
-                              <FileText className="w-4 h-4 text-indigo-500" /> Facts Collected
-                            </p>
-                            <ul className="space-y-3">
-                              {intakeState.facts.map((fact, i) => (
-                                <li key={i} className="text-sm text-slate-600 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                                  <div className="flex justify-between items-start mb-1">
-                                    <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{fact.label}</span>
-                                    <span className="text-[10px] text-slate-400">{fact.source}</span>
-                                  </div>
-                                  <span className="leading-relaxed">{fact.text}</span>
-                                </li>
-                              ))}
-                            </ul>
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-1 flex items-center gap-1.5">
+                                <Briefcase className="w-3.5 h-3.5" /> Case Classification
+                              </p>
+                              <p className="text-base text-slate-900 font-medium">{triageSummary.caseType}</p>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
                           </div>
-                        )}
+                        </button>
 
-                        {/* Missing Information */}
-                        {intakeState.missingInfo.length > 0 && (
-                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm relative overflow-hidden">
-                            <div className="absolute top-0 left-0 w-1 h-full bg-amber-500/50" />
-                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
-                              <AlertCircle className="w-4 h-4 text-amber-500" /> Information Gaps
+                        {/* Extracted Facts Card */}
+                        <button 
+                          onClick={() => setSelectedSummarySection('extracted_facts')}
+                          className="w-full text-left bg-white/30 hover:bg-white/60 rounded-xl p-4 border border-slate-200 shadow-sm transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-2">
+                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                              <ListChecks className="w-3.5 h-3.5" /> Extracted Facts
                             </p>
-                            <ul className="space-y-2">
-                              {intakeState.missingInfo.map((info, i) => (
-                                <li key={i} className="flex items-start gap-2 text-sm text-slate-500">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500/50 shrink-0 mt-2" />
-                                  <span className="leading-relaxed">{info}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {/* Action List */}
-                        {intakeState.actionList.length > 0 && (
-                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm">
-                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Dynamic Action List
-                            </p>
-                            <ul className="space-y-3">
-                              {intakeState.actionList.map((action, i) => (
-                                <li key={i} className="text-sm text-slate-600 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                                  <p className="font-medium text-slate-900 mb-1">{action.action}</p>
-                                  <p className="text-xs text-slate-500">{action.reason}</p>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {/* Timeline */}
-                        {intakeState.timeline.length > 0 && (
-                          <div className="bg-white/30 rounded-xl p-4 border border-slate-200 shadow-sm">
-                            <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-3 flex items-center gap-2">
-                              <Clock className="w-4 h-4 text-blue-500" /> Automated Chronology
-                            </p>
-                            <div className="space-y-3 relative before:absolute before:inset-0 before:ml-2 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
-                              {intakeState.timeline.map((event, i) => (
-                                <div key={i} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                                  <div className="flex items-center justify-center w-4 h-4 rounded-full border border-white bg-slate-300 group-[.is-active]:bg-blue-500 text-slate-500 group-[.is-active]:text-blue-50 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2"></div>
-                                  <div className="w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] p-2 rounded border border-slate-200 bg-white shadow-sm">
-                                    <div className="text-xs text-slate-600">{event}</div>
-                                  </div>
-                                </div>
-                              ))}
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{triageSummary.factsCollected?.length || 0}</span>
+                              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
                             </div>
                           </div>
-                        )}
+                          <p className="text-sm text-slate-600 truncate">
+                            {triageSummary.factsCollected?.[0]?.fact || 'No facts extracted yet...'}
+                          </p>
+                        </button>
 
-                        {/* CTA Buttons */}
-                        {intakeState.isComplete && (
-                          <div className="pt-4 flex flex-col gap-3">
-                            <button 
-                              onClick={() => setIsPacketModalOpen(true)}
-                              className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-sm font-medium rounded-xl shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] transition-all flex items-center justify-center gap-2"
-                            >
-                              <FileText className="w-4 h-4" />
-                              View Full Summary
-                            </button>
-                            <button 
-                              onClick={() => setShowLawyerModal(true)}
-                              className="w-full py-3 px-4 bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50 text-slate-700 text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2"
-                            >
-                              <Briefcase className="w-4 h-4" />
-                              Continue to Teleconsultation
-                            </button>
+                        {/* Timeline Card */}
+                        <button 
+                          onClick={() => setSelectedSummarySection('timeline')}
+                          className="w-full text-left bg-white/30 hover:bg-white/60 rounded-xl p-4 border border-slate-200 shadow-sm transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-2">
+                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                              <CalendarDays className="w-3.5 h-3.5" /> Timeline Events
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{triageSummary.timelineEvents?.length || 0}</span>
+                              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
+                            </div>
                           </div>
-                        )}
+                          <p className="text-sm text-slate-600 truncate">
+                            {triageSummary.timelineEvents?.[0]?.event || 'No events recorded yet...'}
+                          </p>
+                        </button>
+
+                        {/* Documents Card */}
+                        <button 
+                          onClick={() => setSelectedSummarySection('documents')}
+                          className="w-full text-left bg-white/30 hover:bg-white/60 rounded-xl p-4 border border-slate-200 shadow-sm transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-2">
+                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                              <FileCheck className="w-3.5 h-3.5" /> Supporting Documents
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{triageSummary.documentsUploaded?.length || 0}</span>
+                              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            {triageSummary.missingDocuments?.length > 0 && (
+                              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" /> {triageSummary.missingDocuments.length} Missing
+                              </span>
+                            )}
+                          </div>
+                        </button>
+
+                        {/* Recommended Actions Card */}
+                        <button 
+                          onClick={() => setSelectedSummarySection('recommended_actions')}
+                          className="w-full text-left bg-white/30 hover:bg-white/60 rounded-xl p-4 border border-slate-200 shadow-sm transition-all group relative overflow-hidden"
+                        >
+                          <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500/50" />
+                          <div className="flex justify-between items-center mb-2">
+                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Recommended Actions
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">{triageSummary.recommendedActions?.length || 0}</span>
+                              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
+                            </div>
+                          </div>
+                          <p className="text-sm text-slate-600 truncate">
+                            {triageSummary.recommendedActions?.[0]?.title || 'Awaiting analysis...'}
+                          </p>
+                        </button>
+
+                        {/* Readiness Score Card */}
+                        <button 
+                          onClick={() => setSelectedSummarySection('readiness')}
+                          className="w-full text-left bg-white/30 hover:bg-white/60 rounded-xl p-4 border border-slate-200 shadow-sm transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-2">
+                            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                              <Activity className="w-3.5 h-3.5" /> Consultation Readiness
+                            </p>
+                            <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div 
+                                className={`h-full rounded-full transition-all duration-1000 ${
+                                  (triageSummary.readinessScore || 0) >= 70 ? 'bg-emerald-500' :
+                                  (triageSummary.readinessScore || 0) >= 40 ? 'bg-amber-500' : 'bg-red-500'
+                                }`}
+                                style={{ width: `${triageSummary.readinessScore || 0}%` }}
+                              />
+                            </div>
+                            <span className="text-sm font-bold text-slate-700">{triageSummary.readinessScore || 0}%</span>
+                          </div>
+                        </button>
+                      </div>
+
+                      <div className="pt-4 mt-2 border-t border-slate-200 flex flex-col gap-3">
+                        <button 
+                          onClick={() => setIsPacketModalOpen(true)}
+                          disabled={!isIntakeComplete && triageSummary.readinessScore < 80}
+                          className="w-full py-3.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-sm font-medium rounded-xl shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-[0_4px_14px_0_rgba(147,51,234,0.39)]"
+                        >
+                          <FileText className="w-4 h-4" />
+                          {isIntakeComplete || triageSummary.readinessScore >= 80 ? 'Generate Consultation Packet' : 'Collecting Information...'}
+                        </button>
                       </div>
                     </motion.div>
                   ) : (
@@ -1474,13 +1234,13 @@ export default function App() {
                       transition={{ duration: 0.3 }}
                       className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-8 flex-1 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-[0_8px_40px_rgb(147,51,234,0.08)]"
                     >
-                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(147,51,234,0.05),transparent_70%)]" />
+                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(220,38,38,0.05),transparent_70%)]" />
                       <div className="w-20 h-20 rounded-[2rem] bg-white/60 backdrop-blur-md border border-white/80 shadow-[0_8px_30px_rgba(147,51,234,0.08)] flex items-center justify-center mb-6 relative z-10 overflow-hidden">
                         <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-indigo-500/10" />
                         <div className="absolute inset-0 rounded-[2rem] border border-purple-500/20 animate-ping opacity-20" />
                         <MessageSquare className="w-10 h-10 text-purple-400 relative z-10" />
                       </div>
-                      <h3 className="text-xl font-medium text-slate-900 mb-3 z-10">Intake in progress</h3>
+                      <h3 className="text-xl font-medium text-slate-900 mb-3 z-10">Intake Summary Pending</h3>
                       <p className="text-sm text-slate-500 max-w-sm leading-relaxed z-10">
                         Describe your legal issue to generate a structured intake summary, identify critical deadlines, and prepare an action plan.
                       </p>
@@ -2189,6 +1949,283 @@ export default function App() {
         </div>
       </section>
 
+      {/* Summary Section Modal */}
+      <AnimatePresence>
+        {selectedSummarySection && triageSummary && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-12 bg-slate-900/60 backdrop-blur-md"
+            onClick={() => setSelectedSummarySection(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+                    {selectedSummarySection === 'case_summary' && <Briefcase className="w-5 h-5 text-purple-600" />}
+                    {selectedSummarySection === 'extracted_facts' && <ListChecks className="w-5 h-5 text-purple-600" />}
+                    {selectedSummarySection === 'timeline' && <CalendarDays className="w-5 h-5 text-purple-600" />}
+                    {selectedSummarySection === 'documents' && <FileCheck className="w-5 h-5 text-purple-600" />}
+                    {selectedSummarySection === 'recommended_actions' && <CheckCircle2 className="w-5 h-5 text-purple-600" />}
+                    {selectedSummarySection === 'readiness' && <Activity className="w-5 h-5 text-purple-600" />}
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-900">
+                      {selectedSummarySection === 'case_summary' && 'Case Classification'}
+                      {selectedSummarySection === 'extracted_facts' && 'Extracted Facts'}
+                      {selectedSummarySection === 'timeline' && 'Timeline Events'}
+                      {selectedSummarySection === 'documents' && 'Supporting Documents'}
+                      {selectedSummarySection === 'recommended_actions' && 'Recommended Actions'}
+                      {selectedSummarySection === 'readiness' && 'Consultation Readiness'}
+                    </h2>
+                    <p className="text-sm text-slate-500">
+                      {selectedSummarySection === 'case_summary' && 'Current understanding of the legal matter.'}
+                      {selectedSummarySection === 'extracted_facts' && 'Key details gathered from documents and chat.'}
+                      {selectedSummarySection === 'timeline' && 'Chronological sequence of important events.'}
+                      {selectedSummarySection === 'documents' && 'Files uploaded and additional documents needed.'}
+                      {selectedSummarySection === 'recommended_actions' && 'Suggested next steps based on current facts.'}
+                      {selectedSummarySection === 'readiness' && 'How prepared this case is for lawyer review.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedSummarySection(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+                {selectedSummarySection === 'case_summary' && (
+                  <div className="space-y-6">
+                    <div className="bg-slate-50 rounded-xl p-5 border border-slate-200">
+                      <p className="text-sm text-slate-500 font-medium mb-1">Primary Classification</p>
+                      <p className="text-lg font-semibold text-slate-900">{triageSummary.caseType}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-50 rounded-xl p-5 border border-slate-200">
+                        <p className="text-sm text-slate-500 font-medium mb-1">Urgency Level</p>
+                        <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold border ${
+                          triageSummary.urgency === 'Critical' ? 'bg-red-50 border-red-200 text-red-600' :
+                          triageSummary.urgency === 'High' ? 'bg-orange-50 border-orange-200 text-orange-600' :
+                          triageSummary.urgency === 'Medium' ? 'bg-purple-50 border-purple-200 text-purple-600' :
+                          'bg-emerald-50 border-emerald-200 text-emerald-600'
+                        }`}>
+                          {triageSummary.urgency}
+                        </span>
+                      </div>
+                      <div className="bg-slate-50 rounded-xl p-5 border border-slate-200">
+                        <p className="text-sm text-slate-500 font-medium mb-1">Intake Status</p>
+                        <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold border ${
+                          triageSummary.status === 'Ready for Review' || triageSummary.status === 'Complete' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-amber-50 border-amber-200 text-amber-600'
+                        }`}>
+                          {triageSummary.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-purple-50 rounded-xl p-5 border border-purple-100">
+                      <p className="text-sm text-purple-700 font-medium mb-2 flex items-center gap-2">
+                        <Bot className="w-4 h-4" /> AI Assessment
+                      </p>
+                      <p className="text-sm text-purple-900/80 leading-relaxed">
+                        {triageSummary.lawyerAdvisable}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {selectedSummarySection === 'extracted_facts' && (
+                  <div className="space-y-4">
+                    {triageSummary.factsCollected?.length > 0 ? (
+                      triageSummary.factsCollected.map((item: any, i: number) => (
+                        <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex gap-4 items-start">
+                          <div className="w-8 h-8 rounded-full bg-purple-50 flex items-center justify-center shrink-0 mt-0.5">
+                            <span className="text-sm font-semibold text-purple-600">{i + 1}</span>
+                          </div>
+                          <div>
+                            <p className="text-slate-900 font-medium mb-1">{item.fact}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1">
+                              <FileSearch className="w-3 h-3" /> Source: {item.source}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12">
+                        <FileQuestion className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500">No facts extracted yet.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selectedSummarySection === 'timeline' && (
+                  <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent">
+                    {triageSummary.timelineEvents?.length > 0 ? (
+                      triageSummary.timelineEvents.map((item: any, i: number) => (
+                        <div key={i} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                          <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-white bg-purple-100 text-purple-600 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10">
+                            <CalendarDays className="w-4 h-4" />
+                          </div>
+                          <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-sm font-semibold text-purple-600">{item.date}</span>
+                            </div>
+                            <h4 className="text-base font-medium text-slate-900 mb-1">{item.event}</h4>
+                            <p className="text-sm text-slate-500">{item.significance}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12 relative z-10">
+                        <Clock className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500">No timeline events recorded yet.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selectedSummarySection === 'documents' && (
+                  <div className="space-y-8">
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-500" /> Uploaded Documents
+                      </h4>
+                      <div className="grid gap-3">
+                        {triageSummary.documentsUploaded?.length > 0 ? (
+                          triageSummary.documentsUploaded.map((doc: string, i: number) => (
+                            <div key={i} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                              <FileText className="w-5 h-5 text-slate-400" />
+                              <span className="text-sm font-medium text-slate-700">{doc}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-slate-500 italic">No documents uploaded.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" /> Missing / Recommended Documents
+                      </h4>
+                      <div className="grid gap-3">
+                        {triageSummary.missingDocuments?.length > 0 ? (
+                          triageSummary.missingDocuments.map((doc: string, i: number) => (
+                            <div key={i} className="flex items-center gap-3 p-3 bg-amber-50/50 border border-amber-100 rounded-lg border-dashed">
+                              <FileWarning className="w-5 h-5 text-amber-400" />
+                              <span className="text-sm font-medium text-amber-800">{doc}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-slate-500 italic">No missing documents identified.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedSummarySection === 'recommended_actions' && (
+                  <div className="space-y-4">
+                    {triageSummary.recommendedActions?.length > 0 ? (
+                      triageSummary.recommendedActions.map((action: any, i: number) => (
+                        <div key={i} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm relative overflow-hidden">
+                          <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500" />
+                          <h4 className="text-base font-semibold text-slate-900 mb-2">{action.title}</h4>
+                          <p className="text-sm text-slate-600 flex items-start gap-2">
+                            <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                            {action.reason}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12">
+                        <CheckCircle2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-slate-500">No recommended actions yet.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selectedSummarySection === 'readiness' && (
+                  <div className="space-y-8">
+                    <div className="text-center">
+                      <div className="inline-flex items-center justify-center w-32 h-32 rounded-full border-8 border-slate-50 relative mb-4">
+                        <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 36 36">
+                          <path
+                            className="text-slate-100"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                          />
+                          <path
+                            className={`${
+                              (triageSummary.readinessScore || 0) >= 70 ? 'text-emerald-500' :
+                              (triageSummary.readinessScore || 0) >= 40 ? 'text-amber-500' : 'text-red-500'
+                            }`}
+                            strokeDasharray={`${triageSummary.readinessScore || 0}, 100`}
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                          />
+                        </svg>
+                        <div className="absolute flex flex-col items-center justify-center">
+                          <span className="text-3xl font-bold text-slate-900">{triageSummary.readinessScore || 0}%</span>
+                        </div>
+                      </div>
+                      <h3 className="text-xl font-semibold text-slate-900 mb-2">Consultation Readiness</h3>
+                      <p className="text-slate-500 max-w-sm mx-auto">
+                        This score indicates how prepared your case is for a lawyer's review based on the facts and documents collected.
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
+                      <h4 className="text-sm font-semibold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <HelpCircle className="w-4 h-4 text-slate-400" /> Missing Information
+                      </h4>
+                      <ul className="space-y-3">
+                        {triageSummary.missingInfo?.length > 0 ? (
+                          triageSummary.missingInfo.map((info: string, i: number) => (
+                            <li key={i} className="flex items-start gap-3 text-sm text-slate-600">
+                              <XCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                              <span>{info}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="flex items-center gap-2 text-sm text-emerald-600 font-medium">
+                            <CheckCircle2 className="w-4 h-4" /> All critical information collected.
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+                <button
+                  onClick={() => setSelectedSummarySection(null)}
+                  className="px-6 py-2.5 bg-white border border-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Consultation-Ready Packet Modal */}
       <AnimatePresence>
         {isPacketModalOpen && triageSummary && (
@@ -2271,7 +2308,7 @@ export default function App() {
                         />
                         <path
                           className="text-purple-600"
-                          strokeDasharray="72, 100"
+                          strokeDasharray={`${triageSummary.readinessScore}, 100`}
                           strokeWidth="3"
                           strokeLinecap="round"
                           stroke="currentColor"
@@ -2280,13 +2317,13 @@ export default function App() {
                         />
                       </svg>
                       <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-lg font-bold text-slate-900 leading-none">72</span>
+                        <span className="text-lg font-bold text-slate-900 leading-none">{triageSummary.readinessScore}</span>
                       </div>
                     </div>
                     <div className="relative z-10">
                       <p className="text-xs font-bold text-purple-600 uppercase tracking-wider mb-1.5">Readiness Score</p>
                       <p className="text-xs text-slate-600 leading-relaxed font-light">
-                        Missing key dates and counterparty details. Gather before consultation.
+                        {triageSummary.readinessScore >= 80 ? 'Ready for consultation.' : 'Gather missing info before consultation.'}
                       </p>
                     </div>
                   </div>
@@ -2333,7 +2370,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* D. Timeline & E. Key Questions */}
+                {/* D. Timeline & E. Key Facts */}
                 <div className="grid md:grid-cols-2 gap-8">
                   <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200/60 shadow-sm relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-slate-300" />
@@ -2342,12 +2379,16 @@ export default function App() {
                       Timeline of Events
                     </h4>
                     <div className="space-y-8 relative before:absolute before:inset-y-2 before:left-[11px] before:w-px before:bg-slate-200">
-                      {documentTypes[selectedDocType].packetData.timeline.map((event, i) => (
+                      {triageSummary.timelineEvents.map((event, i) => (
                         <div key={i} className="flex gap-5 relative z-10">
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${i === 0 ? 'bg-purple-50 border-purple-300 shadow-sm' : 'bg-white border-slate-300'}`}>
                             <div className={`w-2 h-2 rounded-full ${i === 0 ? 'bg-purple-600' : 'bg-slate-300'}`} />
                           </div>
-                          <p className={`text-[15px] pt-0.5 leading-relaxed ${i === 0 ? 'text-slate-900 font-medium' : 'text-slate-500 font-light'}`}>{event}</p>
+                          <div>
+                            <p className="text-sm font-medium text-slate-900">{event.date}</p>
+                            <p className={`text-[15px] pt-0.5 leading-relaxed ${i === 0 ? 'text-slate-900 font-medium' : 'text-slate-500 font-light'}`}>{event.event}</p>
+                            {event.significance && <p className="text-xs text-slate-400 mt-1">{event.significance}</p>}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2356,13 +2397,16 @@ export default function App() {
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500/50" />
                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-8">
                       <span className="w-6 h-6 rounded-md bg-white border border-slate-200/60 flex items-center justify-center text-slate-500 shadow-sm">E</span>
-                      Key Questions for Lawyer
+                      Key Facts Extracted
                     </h4>
                     <ul className="space-y-4">
-                      {documentTypes[selectedDocType].packetData.questions.map((q, i) => (
+                      {triageSummary.factsCollected.map((fact, i) => (
                         <li key={i} className="flex items-start gap-4 bg-slate-50/50 p-5 rounded-xl border border-slate-100 shadow-sm">
                           <MessageSquare className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
-                          <span className="text-[15px] text-slate-600 leading-relaxed font-light">{q}</span>
+                          <div>
+                            <span className="text-[15px] text-slate-600 leading-relaxed font-light">{fact.fact}</span>
+                            <p className="text-xs text-slate-400 mt-1">Source: {fact.source}</p>
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -2378,11 +2422,13 @@ export default function App() {
                       Supporting Documents
                     </h4>
                     <ul className="space-y-4">
-                      <li className="flex items-center gap-4 text-[15px] text-slate-900 bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 shadow-sm">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                        <span className="font-medium">Uploaded {documentTypes[selectedDocType].label}</span>
-                      </li>
-                      {documentTypes[selectedDocType].packetData.checklist.map((item, i) => (
+                      {triageSummary.documentsUploaded.map((doc, i) => (
+                        <li key={i} className="flex items-center gap-4 text-[15px] text-slate-900 bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 shadow-sm">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                          <span className="font-medium">{doc}</span>
+                        </li>
+                      ))}
+                      {triageSummary.missingDocuments.map((item, i) => (
                         <li key={i} className="flex items-center gap-4 text-[15px] text-slate-500 p-4 rounded-xl hover:bg-slate-50 transition-colors font-light">
                           <div className="w-5 h-5 rounded border-2 border-slate-300 shrink-0" />
                           {item}
@@ -2415,12 +2461,15 @@ export default function App() {
                     Recommended Next Action
                   </h4>
                   <div className="grid sm:grid-cols-2 gap-5">
-                    {documentTypes[selectedDocType].packetData.nextActions.map((action, i) => (
-                      <div key={i} className="flex items-center gap-5 bg-slate-50/50 p-5 rounded-xl border border-slate-200/60 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm hover:shadow">
-                        <div className="w-10 h-10 rounded-full bg-white border border-slate-200/60 flex items-center justify-center shrink-0 group-hover:bg-indigo-50 group-hover:border-indigo-200 transition-colors shadow-sm">
-                          <ArrowRight className="w-5 h-5 text-indigo-600" />
+                    {triageSummary.recommendedActions.map((action, i) => (
+                      <div key={i} className="flex flex-col gap-2 bg-slate-50/50 p-5 rounded-xl border border-slate-200/60 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm hover:shadow">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-white border border-slate-200/60 flex items-center justify-center shrink-0 group-hover:bg-indigo-50 group-hover:border-indigo-200 transition-colors shadow-sm">
+                            <ArrowRight className="w-4 h-4 text-indigo-600" />
+                          </div>
+                          <span className="text-[15px] font-medium text-slate-700">{action.title}</span>
                         </div>
-                        <span className="text-[15px] font-medium text-slate-700">{action}</span>
+                        <p className="text-sm text-slate-500 ml-11">{action.reason}</p>
                       </div>
                     ))}
                   </div>

@@ -24,53 +24,70 @@ async function startServer() {
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-      const systemInstruction = `You are Lion LawSense AI, a legal triage assistant in Singapore. 
-Your goal is to help users understand their legal issues, identify the type of document they have uploaded (if any), and provide a structured summary.
+      const systemInstruction = `You are Lion LawSense AI, a professional legal intake assistant in Singapore. 
+Your goal is to interview the user, collect facts about their legal issue, and build a structured case summary progressively.
 Keep your responses professional, empathetic, and concise.
 Always clarify that you are an AI assistant and not a lawyer, and that your advice does not constitute formal legal advice.
 
-When a user describes an issue, respond with a helpful analysis.
-If they mention tenancy, landlord, deposit, or rent, classify it as a tenancy dispute.
-If they mention fine, parking, or notice, classify it as a fine notice.
-If they mention demand, letter, or sue, classify it as a demand letter.
+CRITICAL INSTRUCTIONS:
+1. Ask ONLY ONE relevant follow-up question at a time to clarify the situation.
+2. If the user writes something unclear, ask for clarification (e.g., "I need a bit more context to classify this matter accurately. Who is the other party involved, and what happened?"). Do NOT return a generic error.
+3. As you collect more information, update the summary fields.
+4. If you have enough information to form a complete initial intake (usually after 3-4 turns), set "isComplete" to true.
 
 Return a JSON object with the following structure:
 {
-  "responseText": "Your conversational response to the user",
-  "docType": "tenancy_agreement | fine_notice | demand_letter | other",
+  "responseText": "Your conversational response to the user, including your next question",
+  "docType": "tenancy_agreement | fine_notice | demand_letter | court_notice | contract | other",
+  "isComplete": boolean,
   "summary": {
-    "caseType": "String",
-    "urgency": "Low | Medium | High",
-    "nextSteps": ["Step 1", "Step 2"],
-    "missingInfo": ["Info 1", "Info 2"],
+    "caseType": "String (e.g., Tenancy Dispute, Uncategorized)",
+    "urgency": "Unknown | Low | Medium | High | Critical",
+    "status": "Incomplete | Collecting Facts | Structured | Ready for Review",
+    "factsCollected": [{"fact": "String", "source": "User-stated | From uploaded document | Awaiting verification"}],
+    "timelineEvents": [{"date": "String", "event": "String", "significance": "String"}],
+    "documentsUploaded": ["String"],
+    "missingDocuments": ["String"],
+    "recommendedActions": [{"title": "String", "reason": "String"}],
+    "readinessScore": number (0-100),
+    "missingInfo": ["String"],
     "lawyerAdvisable": "String"
   }
 }`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: message,
+        contents: [systemInstruction, ...history.map((msg: any) => ({
+          role: msg.role === 'ai' ? 'model' : 'user',
+          parts: [{ text: msg.text || (msg.file ? `Uploaded file: ${msg.file.name}` : '') }]
+        })), { role: 'user', parts: [{ text: message }] }],
         config: {
-          systemInstruction,
           responseMimeType: 'application/json',
           responseSchema: {
             type: "OBJECT",
             properties: {
               responseText: { type: "STRING" },
               docType: { type: "STRING" },
+              isComplete: { type: "BOOLEAN" },
               summary: {
                 type: "OBJECT",
                 properties: {
                   caseType: { type: "STRING" },
                   urgency: { type: "STRING" },
-                  nextSteps: { type: "ARRAY", items: { type: "STRING" } },
+                  status: { type: "STRING" },
+                  factsCollected: { type: "ARRAY", items: { type: "OBJECT", properties: { fact: { type: "STRING" }, source: { type: "STRING" } } } },
+                  timelineEvents: { type: "ARRAY", items: { type: "OBJECT", properties: { date: { type: "STRING" }, event: { type: "STRING" }, significance: { type: "STRING" } } } },
+                  documentsUploaded: { type: "ARRAY", items: { type: "STRING" } },
+                  missingDocuments: { type: "ARRAY", items: { type: "STRING" } },
+                  recommendedActions: { type: "ARRAY", items: { type: "OBJECT", properties: { title: { type: "STRING" }, reason: { type: "STRING" } } } },
+                  readinessScore: { type: "INTEGER" },
                   missingInfo: { type: "ARRAY", items: { type: "STRING" } },
                   lawyerAdvisable: { type: "STRING" }
                 },
-                required: ["caseType", "urgency", "nextSteps", "missingInfo", "lawyerAdvisable"]
+                required: ["caseType", "urgency", "status", "factsCollected", "timelineEvents", "documentsUploaded", "missingDocuments", "recommendedActions", "readinessScore", "missingInfo", "lawyerAdvisable"]
               }
             },
-            required: ["responseText", "docType", "summary"]
+            required: ["responseText", "docType", "isComplete", "summary"]
           }
         }
       });
