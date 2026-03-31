@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import path from 'path';
 
 async function startServer() {
@@ -30,64 +30,60 @@ Keep your responses professional, empathetic, and concise.
 Always clarify that you are an AI assistant and not a lawyer, and that your advice does not constitute formal legal advice.
 
 CRITICAL INSTRUCTIONS:
-1. Ask ONLY ONE relevant follow-up question at a time to clarify the situation.
-2. If the user writes something unclear, ask for clarification (e.g., "I need a bit more context to classify this matter accurately. Who is the other party involved, and what happened?"). Do NOT return a generic error.
-3. As you collect more information, update the summary fields.
-4. If you have enough information to form a complete initial intake (usually after 3-4 turns), set "isComplete" to true.
+1. STATEFULNESS: Track the user's answers. Do NOT repeat questions that have already been answered. Only ask for missing information.
+2. STEP-BY-STEP LOGIC & ISSUE FLOWS: Ask ONLY ONE relevant follow-up question at a time based on the case type.
+   - ACCIDENT / LIABILITY: 1) What happened/who is the other party? 2) Injuries or physical damage? 3) Police/insurance report or written notice? 4) Evidence (photos, dashcam, witnesses)? 5) Desired outcome (claim, defend)?
+   - TENANCY: 1) Is there a tenancy agreement? 2) What is the dispute about? 3) Did landlord/tenant respond in writing? 4) Receipts/messages/photos exist? 5) Is there a deadline?
+   - EMPLOYMENT: 1) Are you employee or employer? 2) What happened? 3) Contract/payslips/written notices exist? 4) Deadline or non-payment ongoing?
+   - SME / CONTRACT: 1) Who is the other party? 2) Is there a signed agreement? 3) Type of breach/dispute? 4) Documents existing? 5) Desired outcome?
+   - OTHER: Follow a general flow: 1) What happened? 2) Evidence/documents? 3) Desired outcome?
+3. HUMAN-LIKE RESPONSES: Acknowledge what the user just said before asking the next question. Avoid robotic repetition. Do not sound overly legalistic too early.
+   - Example: "Understood — this sounds like a possible road traffic liability issue involving a PHV driver cutting into your lane. Were there any injuries or visible damage to the vehicles?"
+4. FALLBACK LOGIC: If the user gives a vague answer (e.g., "he hit me"), ask a narrower clarification question instead of repeating a broad question.
+5. COMPLETION: After gathering enough information (around 3 to 5 strong answers covering the steps above), STOP asking questions.
+   - Set "isComplete" to true.
+   - Respond with a completion message like: "Thanks — I have enough information to prepare your preliminary intake summary. I’m now organizing the case details for review."
+6. DYNAMIC SUMMARY: Update the summary fields dynamically based on the actual answers provided. Do not leave the summary generic if specific facts are known.
+   - Set "readinessScore" based on how much info is collected (e.g., 20% initially, 100% when complete).
+   - Set "status" to "In Progress" while collecting, and "Ready for Review" or "Complete" when done.`;
 
-Return a JSON object with the following structure:
-{
-  "responseText": "Your conversational response to the user, including your next question",
-  "docType": "tenancy_agreement | fine_notice | demand_letter | court_notice | contract | other",
-  "isComplete": boolean,
-  "summary": {
-    "caseType": "String (e.g., Tenancy Dispute, Uncategorized)",
-    "urgency": "Unknown | Low | Medium | High | Critical",
-    "status": "Incomplete | Collecting Facts | Structured | Ready for Review",
-    "factsCollected": [{"fact": "String", "source": "User-stated | From uploaded document | Awaiting verification"}],
-    "timelineEvents": [{"date": "String", "event": "String", "significance": "String"}],
-    "documentsUploaded": ["String"],
-    "missingDocuments": ["String"],
-    "recommendedActions": [{"title": "String", "reason": "String"}],
-    "readinessScore": number (0-100),
-    "missingInfo": ["String"],
-    "lawyerAdvisable": "String"
-  }
-}`;
+      const contents = [
+        ...history.map((msg: any) => ({
+          role: msg.role === 'ai' ? 'model' : 'user',
+          parts: [{ text: msg.text || (msg.file ? `Uploaded file: ${msg.file.name}` : '') }]
+        })),
+        { role: 'user', parts: [{ text: message }] }
+      ];
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: [systemInstruction, ...history.map((msg: any) => ({
-          role: msg.role === 'ai' ? 'model' : 'user',
-          parts: [{ text: msg.text || (msg.file ? `Uploaded file: ${msg.file.name}` : '') }]
-        })), { role: 'user', parts: [{ text: message }] }],
+        contents: contents,
         config: {
+          systemInstruction: systemInstruction,
           responseMimeType: 'application/json',
           responseSchema: {
-            type: "OBJECT",
+            type: Type.OBJECT,
             properties: {
-              responseText: { type: "STRING" },
-              docType: { type: "STRING" },
-              isComplete: { type: "BOOLEAN" },
+              responseText: { type: Type.STRING },
+              docType: { type: Type.STRING },
+              isComplete: { type: Type.BOOLEAN },
               summary: {
-                type: "OBJECT",
+                type: Type.OBJECT,
                 properties: {
-                  caseType: { type: "STRING" },
-                  urgency: { type: "STRING" },
-                  status: { type: "STRING" },
-                  factsCollected: { type: "ARRAY", items: { type: "OBJECT", properties: { fact: { type: "STRING" }, source: { type: "STRING" } } } },
-                  timelineEvents: { type: "ARRAY", items: { type: "OBJECT", properties: { date: { type: "STRING" }, event: { type: "STRING" }, significance: { type: "STRING" } } } },
-                  documentsUploaded: { type: "ARRAY", items: { type: "STRING" } },
-                  missingDocuments: { type: "ARRAY", items: { type: "STRING" } },
-                  recommendedActions: { type: "ARRAY", items: { type: "OBJECT", properties: { title: { type: "STRING" }, reason: { type: "STRING" } } } },
-                  readinessScore: { type: "INTEGER" },
-                  missingInfo: { type: "ARRAY", items: { type: "STRING" } },
-                  lawyerAdvisable: { type: "STRING" }
+                  caseType: { type: Type.STRING },
+                  urgency: { type: Type.STRING },
+                  status: { type: Type.STRING },
+                  factsCollected: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { fact: { type: Type.STRING }, source: { type: Type.STRING } } } },
+                  timelineEvents: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { date: { type: Type.STRING }, event: { type: Type.STRING }, significance: { type: Type.STRING } } } },
+                  documentsUploaded: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  missingDocuments: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  recommendedActions: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, reason: { type: Type.STRING } } } },
+                  readinessScore: { type: Type.INTEGER },
+                  missingInfo: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  lawyerAdvisable: { type: Type.STRING }
                 },
-                required: ["caseType", "urgency", "status", "factsCollected", "timelineEvents", "documentsUploaded", "missingDocuments", "recommendedActions", "readinessScore", "missingInfo", "lawyerAdvisable"]
               }
             },
-            required: ["responseText", "docType", "isComplete", "summary"]
           }
         }
       });

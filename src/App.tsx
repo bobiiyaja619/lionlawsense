@@ -258,6 +258,12 @@ export default function App() {
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+  const [selectedHowItWorksStep, setSelectedHowItWorksStep] = useState<any | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
+  const [authTab, setAuthTab] = useState<'login' | 'signup'>('login');
+  const [pendingConsultation, setPendingConsultation] = useState(false);
+  const [showDownloadToast, setShowDownloadToast] = useState(false);
 
   const handleGeneratePacket = () => {
     setIsGeneratingPacket(true);
@@ -321,16 +327,17 @@ export default function App() {
 
     setUploadedFile(newFile);
     
-    setChatHistory(prev => [
-      ...prev,
+    const updatedHistory = [
+      ...chatHistory,
       { role: 'user', type: 'file', file: newFile }
-    ]);
+    ];
+    setChatHistory(updatedHistory);
 
     setIsUploading(true);
     setUploadProgress(0);
 
     let progress = 0;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       progress += 20;
       if (progress > 100) progress = 100;
       setUploadProgress(progress);
@@ -340,15 +347,67 @@ export default function App() {
         setIsUploading(false);
         setIsAnalyzing(true);
 
-        setTimeout(() => {
-          const docData = documentTypes[selectedDocType];
+        try {
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ message: `I have uploaded a file named ${newFile.name}. Please analyze it and ask me any relevant follow-up questions.`, history: updatedHistory }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`Failed to fetch from backend: ${errorData.details || errorData.error || response.statusText}`);
+          }
+
+          const data = await response.json();
+          
+          let docType: keyof typeof documentTypes = 'other';
+          if (documentTypes[data.docType as keyof typeof documentTypes]) {
+            docType = data.docType as keyof typeof documentTypes;
+          }
+
           setChatHistory(prev => [
             ...prev,
-            { role: 'ai', type: 'text', text: docData.aiResponse }
+            { role: 'ai', type: 'text', text: data.responseText }
           ]);
-          setTriageSummary(docData.summary);
+          
+          setSelectedDocType(docType);
+          setTriageSummary(data.summary);
+          setIsIntakeComplete(data.isComplete);
+        } catch (error) {
+          console.error('Error calling chat API:', error);
+          
+          const lowerName = newFile.name.toLowerCase();
+          let fallbackResponse = "I have received your document. To help me understand the context, could you briefly describe the main issue you are facing?";
+          let docType: keyof typeof documentTypes = 'other';
+          
+          if (lowerName.includes('tenancy') || lowerName.includes('lease') || lowerName.includes('rental')) {
+            fallbackResponse = "I see this is a tenancy agreement. What specific issue are you facing with your landlord or tenant (e.g., deposit withholding, early termination)?";
+            docType = 'tenancy_agreement';
+          } else if (lowerName.includes('notice') || lowerName.includes('fine')) {
+            fallbackResponse = "Document received. I see this is a notice. Could you tell me if you are the legally liable party named in the notice?";
+            docType = 'fine_notice';
+          } else if (lowerName.includes('demand') || lowerName.includes('letter')) {
+            fallbackResponse = "Document received. This appears to be a formal demand letter. Have you already responded to this letter or contacted the sender?";
+            docType = 'demand_letter';
+          } else if (lowerName.includes('summons') || lowerName.includes('court')) {
+            fallbackResponse = "Document received. This looks like a court document, which is highly time-sensitive. Could you confirm the date of the hearing or the deadline to respond?";
+            docType = 'court_notice';
+          } else if (lowerName.includes('contract') || lowerName.includes('agreement')) {
+            fallbackResponse = "Document received. This is a commercial contract. Could you describe the specific obligation that you believe has been breached?";
+            docType = 'contract';
+          }
+
+          setChatHistory(prev => [
+            ...prev,
+            { role: 'ai', type: 'text', text: fallbackResponse }
+          ]);
+          setSelectedDocType(docType);
+        } finally {
           setIsAnalyzing(false);
-        }, 2000);
+        }
       }
     }, 200);
   };
@@ -425,10 +484,82 @@ export default function App() {
       setIsIntakeComplete(data.isComplete);
     } catch (error) {
       console.error('Error calling chat API:', error);
+      
+      const lowerInput = userText.toLowerCase();
+      let fallbackResponse = "Understood. To help me classify this accurately, could you tell me who the other party is and briefly what happened?";
+      let caseType = "Uncategorized";
+      let docType: keyof typeof documentTypes = 'other';
+      
+      if (lowerInput.match(/(landlord|tenancy|deposit|rent|eviction)/)) {
+        fallbackResponse = "I see this relates to a tenancy issue. To guide you properly, could you clarify if this is about withholding a deposit, early termination, or something else?";
+        caseType = "Tenancy Dispute";
+        docType = "tenancy_agreement";
+      } else if (lowerInput.match(/(salary|employer|dismissal|cpf|work|employment)/)) {
+        fallbackResponse = "Understood. This sounds like an employment matter. Were you formally dismissed, or is this regarding unpaid salary or benefits?";
+        caseType = "Employment Dispute";
+        docType = "other";
+      } else if (lowerInput.match(/(accident|car|bike|motorbike|collision|insurance|phv|driver)/)) {
+        fallbackResponse = "Understood — this sounds like a possible road traffic liability issue. Were there any injuries or visible damage to the vehicles?";
+        caseType = "Accident / Liability";
+        docType = "other";
+      } else if (lowerInput.match(/(contract|vendor|invoice|breach|client|agreement)/)) {
+        fallbackResponse = "I see this involves a contract or commercial agreement. Could you describe the specific obligation that you believe has been breached?";
+        caseType = "Contract Dispute";
+        docType = "contract";
+      } else if (lowerInput.match(/(notice|summons|demand letter|sued|lawsuit|claim)/)) {
+        fallbackResponse = "I understand. To assess the urgency, have you received any written legal notice, demand letter, or court document?";
+        caseType = "Litigation / Dispute";
+        docType = "demand_letter";
+      } else if (lowerInput.match(/(hit|hurt|injured)/)) {
+        fallbackResponse = "I'm sorry to hear that. Was this a road traffic accident, a workplace incident, or something else? Were there any serious injuries reported?";
+      }
+
+      // Prevent exact repetition of the last AI message
+      const lastAiMessage = chatHistory.filter(m => m.role === 'ai').pop();
+      if (lastAiMessage && lastAiMessage.text === fallbackResponse) {
+        fallbackResponse = "Thank you for sharing that. Could you provide a bit more detail about what outcome you are hoping for, or if you have any supporting documents like photos or messages?";
+      }
+
       setChatHistory(prev => [
         ...prev,
-        { role: 'ai', type: 'text', text: 'Sorry, I encountered an error processing your request. Please try again.' }
+        { role: 'ai', type: 'text', text: fallbackResponse }
       ]);
+      
+      setSelectedDocType(docType);
+      
+      setTriageSummary(prev => {
+        if (!prev) {
+          if (chatHistory.length >= 3) {
+            return {
+              caseType: caseType,
+              urgency: "Medium",
+              status: "Collecting Facts",
+              factsCollected: [{ fact: userText, source: "User-stated" }],
+              timelineEvents: [],
+              documentsUploaded: [],
+              missingDocuments: ["Supporting evidence"],
+              recommendedActions: [],
+              readinessScore: 30,
+              missingInfo: ["Other party details", "Timeline of events", "Desired outcome"],
+              lawyerAdvisable: "Pending further details"
+            };
+          }
+          return null;
+        } else {
+          const newScore = Math.min(prev.readinessScore + 20, 100);
+          return {
+            ...prev,
+            caseType: prev.caseType === "Uncategorized" ? caseType : prev.caseType,
+            factsCollected: [...prev.factsCollected, { fact: userText, source: "User-stated" }],
+            readinessScore: newScore,
+            status: newScore >= 70 ? "Ready for Review" : "Collecting Facts"
+          };
+        }
+      });
+      
+      if (chatHistory.length >= 5) {
+        setIsIntakeComplete(true);
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -474,10 +605,13 @@ export default function App() {
                 FAQ
                 <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-purple-600 transition-all duration-300 group-hover:w-full"></span>
               </a>
-              <a href="#login" className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-purple-700 bg-white/50 hover:bg-purple-50/80 border border-slate-200/60 hover:border-purple-200/80 rounded-full transition-all duration-300 shadow-sm hover:shadow hover:-translate-y-0.5 group">
+              <button 
+                onClick={() => { setIsAuthModalOpen(true); setAuthTab('login'); }}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 hover:text-purple-700 bg-white/50 hover:bg-purple-50/80 border border-slate-200/60 hover:border-purple-200/80 rounded-full transition-all duration-300 shadow-sm hover:shadow hover:-translate-y-0.5 group"
+              >
                 <User className="w-4 h-4 text-slate-400 group-hover:text-purple-500 transition-colors" />
                 Login / Signup
-              </a>
+              </button>
               <a href="#early-access" className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-full transition-all shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] hover:-translate-y-0.5">
                 Early Access
               </a>
@@ -510,10 +644,13 @@ export default function App() {
                 <a href="#about-us" onClick={() => setIsMobileMenuOpen(false)} className="text-base font-medium text-slate-600 hover:text-purple-600 transition-colors">About Us</a>
                 <a href="#services" onClick={() => setIsMobileMenuOpen(false)} className="text-base font-medium text-slate-600 hover:text-purple-600 transition-colors">Services & Partners</a>
                 <a href="#faq" onClick={() => setIsMobileMenuOpen(false)} className="text-base font-medium text-slate-600 hover:text-purple-600 transition-colors">FAQ</a>
-                <a href="#login" onClick={() => setIsMobileMenuOpen(false)} className="flex items-center justify-center gap-2 px-4 py-3 text-base font-medium text-slate-700 bg-slate-50 border border-slate-200/60 rounded-xl transition-colors">
+                <button 
+                  onClick={() => { setIsAuthModalOpen(true); setAuthTab('login'); setIsMobileMenuOpen(false); }}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 text-base font-medium text-slate-700 bg-slate-50 border border-slate-200/60 rounded-xl transition-colors"
+                >
                   <User className="w-5 h-5 text-slate-400" />
                   Login / Signup
-                </a>
+                </button>
                 <a href="#early-access" onClick={() => setIsMobileMenuOpen(false)} className="px-5 py-3 text-center text-base font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-xl shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] transition-all">
                   Early Access
                 </a>
@@ -524,7 +661,8 @@ export default function App() {
       </nav>
 
       {/* Hero Section */}
-      <section id="hero" className="pt-36 pb-24 lg:pt-52 lg:pb-32 relative overflow-hidden bg-white">
+      <section id="hero" className="pt-36 pb-12 lg:pt-40 lg:pb-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[800px] bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.15),transparent_60%)] rounded-full blur-[120px] pointer-events-none" />
         
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
@@ -664,12 +802,14 @@ export default function App() {
           </motion.div>
           </div>
         </div>
+        </div>
       </section>
 
       {/* Interactive MVP Demo */}
-      <section id="demo" className="py-28 lg:py-32 bg-gradient-to-b from-purple-50/40 via-purple-50/10 to-white border-t border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.08),transparent_50%)]" />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+      <section id="demo" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.08),transparent_50%)]" />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="text-center max-w-3xl mx-auto mb-16">
             <h2 className="text-4xl md:text-5xl font-semibold text-slate-900 mb-6 tracking-tight">Experience the Triage</h2>
             <p className="text-lg text-slate-500 font-light">Upload a document or describe your issue to see how our AI structures your legal matter.</p>
@@ -709,8 +849,14 @@ export default function App() {
                       <Scale className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-900 tracking-tight">Lion LawSense AI</h3>
-                      <p className="text-sm text-slate-500 font-light">Legal Triage Assistant</p>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold text-slate-900 tracking-tight">Lion LawSense AI</h3>
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-100 text-[10px] font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1">
+                          <Sparkles className="w-3 h-3" />
+                          Powered by Gemini
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500 font-light">Singapore-focused AI legal intake assistant</p>
                     </div>
                   </div>
                   
@@ -1054,17 +1200,17 @@ export default function App() {
             </div>
 
             {/* Right Panel */}
-            <div className="flex flex-col gap-6 h-[650px]">
+            <div className="flex flex-col h-[650px]">
               <AnimatePresence mode="wait">
                 {activeTab === 'chatbot' ? (
-                  triageSummary ? (
+                  triageSummary && (chatHistory.length >= 3 || isIntakeComplete) ? (
                     <motion.div
                       key="summary"
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20 }}
                       transition={{ duration: 0.3 }}
-                      className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-6 shadow-[0_8px_40px_rgb(147,51,234,0.08)] flex-1 flex flex-col"
+                      className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-6 shadow-[0_8px_40px_rgb(147,51,234,0.08)] flex-1 h-full flex flex-col"
                     >
                       <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-200">
                         <div className="flex items-center gap-2">
@@ -1232,7 +1378,7 @@ export default function App() {
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20 }}
                       transition={{ duration: 0.3 }}
-                      className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-8 flex-1 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-[0_8px_40px_rgb(147,51,234,0.08)]"
+                      className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-8 flex-1 h-full flex flex-col items-center justify-center text-center relative overflow-hidden shadow-[0_8px_40px_rgb(147,51,234,0.08)]"
                     >
                       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(220,38,38,0.05),transparent_70%)]" />
                       <div className="w-20 h-20 rounded-[2rem] bg-white/60 backdrop-blur-md border border-white/80 shadow-[0_8px_30px_rgba(147,51,234,0.08)] flex items-center justify-center mb-6 relative z-10 overflow-hidden">
@@ -1240,9 +1386,13 @@ export default function App() {
                         <div className="absolute inset-0 rounded-[2rem] border border-purple-500/20 animate-ping opacity-20" />
                         <MessageSquare className="w-10 h-10 text-purple-400 relative z-10" />
                       </div>
-                      <h3 className="text-xl font-medium text-slate-900 mb-3 z-10">Intake Summary Pending</h3>
+                      <h3 className="text-xl font-medium text-slate-900 mb-3 z-10">
+                        {chatHistory.length > 1 ? "Collecting case details..." : "Intake Summary Pending"}
+                      </h3>
                       <p className="text-sm text-slate-500 max-w-sm leading-relaxed z-10">
-                        Describe your legal issue to generate a structured intake summary, identify critical deadlines, and prepare an action plan.
+                        {chatHistory.length > 1 
+                          ? "I am analyzing your responses to build a structured intake summary. Please continue answering the questions."
+                          : "Describe your legal issue to generate a structured intake summary, identify critical deadlines, and prepare an action plan."}
                       </p>
                     </motion.div>
                   )
@@ -1253,7 +1403,7 @@ export default function App() {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.3 }}
-                    className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-8 flex-1 flex flex-col shadow-[0_8px_40px_rgb(147,51,234,0.08)]"
+                    className="bg-white/80 backdrop-blur-xl border border-white rounded-2xl p-8 flex-1 h-full flex flex-col shadow-[0_8px_40px_rgb(147,51,234,0.08)]"
                   >
                     <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200">
                       <div className="w-10 h-10 rounded-2xl bg-white/60 backdrop-blur-md border border-white/80 shadow-[0_4px_12px_rgba(147,51,234,0.1)] flex items-center justify-center relative overflow-hidden">
@@ -1327,6 +1477,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        </div>
       </section>
 
       {/* Toast Notification */}
@@ -1342,6 +1493,23 @@ export default function App() {
               <Check className="w-4 h-4 text-emerald-600" />
             </div>
             <span className="text-sm font-medium">Consultation-ready packet prepared successfully.</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Download Toast Notification */}
+      <AnimatePresence>
+        {showDownloadToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: 50, x: '-50%' }}
+            className="fixed bottom-8 left-1/2 z-50 flex items-center gap-3 bg-white border border-slate-200 text-slate-900 px-6 py-3 rounded-full shadow-2xl"
+          >
+            <div className="w-6 h-6 rounded-full bg-purple-500/10 flex items-center justify-center">
+              <Download className="w-4 h-4 text-purple-600" />
+            </div>
+            <span className="text-sm font-medium">Generated packet downloaded successfully.</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1433,19 +1601,30 @@ export default function App() {
               </div>
 
               {/* Modal Footer */}
-              <div className="p-6 sm:p-8 border-t border-slate-200 bg-white shrink-0">
+              <div className="p-6 sm:p-8 border-t border-slate-200 bg-white shrink-0 flex flex-col gap-3">
                 <button 
                   onClick={() => {
                     setShowLawyerModal(false);
-                    setShowToast(true);
-                    setTimeout(() => setShowToast(false), 3000);
+                    setPendingConsultation(true);
+                    setAuthTab('login');
+                    setIsAuthModalOpen(true);
                   }}
                   className="w-full py-4 px-6 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-base font-bold rounded-xl transition-all shadow-[0_4px_20px_rgba(147,51,234,0.4)] hover:shadow-[0_8px_30px_rgba(147,51,234,0.6)] flex items-center justify-center gap-2"
                 >
                   Request Consultation
                   <ArrowRight className="w-5 h-5" />
                 </button>
-                <p className="text-center text-xs text-slate-400 mt-4">No payment required to request.</p>
+                <button 
+                  onClick={() => {
+                    setShowDownloadToast(true);
+                    setTimeout(() => setShowDownloadToast(false), 3000);
+                  }}
+                  className="w-full py-4 px-6 bg-white hover:bg-slate-50 text-slate-700 text-base font-semibold rounded-xl transition-all border border-slate-200 shadow-sm flex items-center justify-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  Download Generated Packet
+                </button>
+                <p className="text-center text-xs text-slate-400 mt-2">No payment required to request.</p>
               </div>
             </motion.div>
           </div>
@@ -1453,7 +1632,8 @@ export default function App() {
       </AnimatePresence>
 
       {/* How It Works */}
-      <section id="how-it-works" className="py-28 lg:py-32 bg-white border-t border-slate-100 shadow-[inset_0_2px_20px_rgba(0,0,0,0.01)] relative overflow-hidden">
+      <section id="how-it-works" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-px bg-gradient-to-r from-transparent via-purple-300 to-transparent" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom,rgba(147,51,234,0.05),transparent_50%)]" />
         
@@ -1481,31 +1661,124 @@ export default function App() {
                   step: '01',
                   title: 'Describe Your Issue',
                   desc: 'Users briefly explain their situation or upload a relevant document (e.g., a contract or demand letter).',
-                  icon: MessageSquare
+                  icon: MessageSquare,
+                  userDoes: [
+                    "Briefly describe the legal issue in plain English",
+                    "Optionally upload supporting documents such as letters, contracts, notices, screenshots, or agreements"
+                  ],
+                  lionDoes: [
+                    "Detects likely legal category",
+                    "Identifies whether more clarification is needed",
+                    "Begins building an intake structure"
+                  ],
+                  exampleOutputs: [
+                    "“My landlord withheld my deposit.”",
+                    "“My employer has not paid my salary.”",
+                    "“A client breached our contract.”",
+                    "“I received a demand letter.”"
+                  ],
+                  whyMatters: [
+                    "Good intake starts with accurate issue framing",
+                    "The more context provided, the better the triage quality"
+                  ]
                 },
                 {
                   step: '02',
                   title: 'AI Triage & Analysis',
                   desc: 'Our AI instantly analyzes the facts, identifies key legal issues, and highlights potential risks.',
-                  icon: ShieldCheck
+                  icon: ShieldCheck,
+                  userDoes: [
+                    "Answers follow-up questions from the AI",
+                    "Clarifies who is involved, what happened, and whether any deadlines or documents exist"
+                  ],
+                  lionDoes: [
+                    "Classifies the issue type",
+                    "Assesses urgency",
+                    "Extracts key facts",
+                    "Detects missing information"
+                  ],
+                  exampleOutputs: [
+                    "Likely tenancy dispute",
+                    "Possible employment salary issue",
+                    "Potential SME contract breach",
+                    "Urgency elevated due to written notice"
+                  ],
+                  whyMatters: [
+                    "A better triage reduces confusion and improves lawyer readiness"
+                  ]
                 },
                 {
                   step: '03',
                   title: 'Generate Consultation Packet',
                   desc: 'A structured, easy-to-read brief is created, summarizing the case, timeline, and missing information.',
-                  icon: FileSearch
+                  icon: FileSearch,
+                  userDoes: [
+                    "Reviews AI-collected facts",
+                    "Confirms details and uploads missing supporting documents if needed"
+                  ],
+                  lionDoes: [
+                    "Creates a structured case summary",
+                    "Builds a chronology",
+                    "Lists supporting documents",
+                    "Generates questions to ask a lawyer"
+                  ],
+                  exampleOutputs: [
+                    "Case Summary",
+                    "Timeline of Events",
+                    "Missing Information",
+                    "Questions for Lawyer"
+                  ],
+                  whyMatters: [
+                    "This reduces repeated explanations and saves consultation time"
+                  ]
                 },
                 {
                   step: '04',
                   title: 'Review & Prepare',
                   desc: 'You review the packet to understand your position and gather any missing documents before meeting a lawyer.',
-                  icon: FileText
+                  icon: FileText,
+                  userDoes: [
+                    "Reviews the generated intake packet",
+                    "Checks if anything is missing",
+                    "Decides whether to proceed to teleconsultation"
+                  ],
+                  lionDoes: [
+                    "Highlights readiness gaps",
+                    "Suggests missing documents",
+                    "Prepares user for a more productive consultation"
+                  ],
+                  exampleOutputs: [
+                    "Readiness score",
+                    "Missing documents list",
+                    "Recommended next actions"
+                  ],
+                  whyMatters: [
+                    "Users become more prepared before engaging a lawyer"
+                  ]
                 },
                 {
                   step: '05',
                   title: 'Connect with a Lawyer',
                   desc: 'Share your structured packet with a specialized partner lawyer for a highly efficient, focused consultation.',
-                  icon: Users
+                  icon: Users,
+                  userDoes: [
+                    "Selects teleconsultation or urgent call",
+                    "Shares the prepared intake packet with a matched legal professional"
+                  ],
+                  lionDoes: [
+                    "Routes the matter to the right expert partner",
+                    "Sends the consultation-ready summary",
+                    "Improves consultation efficiency"
+                  ],
+                  exampleOutputs: [
+                    "Lawyer match",
+                    "Video consultation setup",
+                    "Urgent call option",
+                    "Shared consultation packet"
+                  ],
+                  whyMatters: [
+                    "The lawyer starts with context already prepared, saving time and cost"
+                  ]
                 }
               ].map((item, i) => (
                 <div key={i} className="relative group flex flex-col items-center text-center">
@@ -1522,12 +1795,12 @@ export default function App() {
                     </div>
                   )}
                   
-                  <div className="w-28 h-28 rounded-[2rem] bg-white/60 backdrop-blur-md border border-white/80 shadow-[0_8px_30px_rgba(147,51,234,0.06)] flex items-center justify-center mb-8 relative group-hover:border-purple-200 group-hover:shadow-[0_12px_40px_rgba(147,51,234,0.15)] group-hover:-translate-y-1 transition-all duration-500 overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-indigo-500/5" />
-                    <div className="absolute -top-4 -right-4 w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-50 to-white border border-purple-100 shadow-sm flex items-center justify-center text-sm font-bold text-purple-600 group-hover:bg-gradient-to-br group-hover:from-purple-600 group-hover:to-indigo-600 group-hover:text-white group-hover:border-transparent transition-all duration-500 z-10">
-                      {item.step}
-                    </div>
-                    <item.icon className="w-10 h-10 text-purple-600 relative z-10 group-hover:scale-110 transition-all duration-500" strokeWidth={1.5} />
+                  <div 
+                    onClick={() => setSelectedHowItWorksStep(item)}
+                    className="w-28 h-28 rounded-[2rem] bg-white/60 backdrop-blur-md border border-white/80 shadow-[0_8px_30px_rgba(147,51,234,0.06)] flex items-center justify-center mb-8 relative group-hover:border-purple-300 group-hover:shadow-[0_12px_40px_rgba(147,51,234,0.25)] group-hover:-translate-y-2 cursor-pointer transition-all duration-500 overflow-hidden"
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-indigo-500/5 group-hover:from-purple-500/10 group-hover:to-indigo-500/10 transition-colors duration-500" />
+                    <item.icon className="w-10 h-10 text-purple-600 relative z-10 group-hover:scale-110 group-hover:text-purple-500 group-hover:brightness-110 transition-all duration-500" strokeWidth={1.5} />
                   </div>
                   <h3 className="text-lg font-semibold text-slate-900 mb-3 group-hover:text-purple-700 transition-colors duration-300">{item.title}</h3>
                   <p className="text-sm text-slate-500 leading-relaxed font-light px-2">{item.desc}</p>
@@ -1536,12 +1809,14 @@ export default function App() {
             </div>
           </div>
         </div>
+        </div>
       </section>
 
       {/* About Us */}
-      <section id="about-us" className="py-28 lg:py-32 bg-gradient-to-b from-purple-50/40 via-purple-50/10 to-white border-t border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.08),transparent_50%)]" />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+      <section id="about-us" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.08),transparent_50%)]" />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="text-center max-w-3xl mx-auto mb-16">
             <h2 className="text-3xl md:text-5xl font-semibold text-slate-900 mb-6 tracking-tight">About Us</h2>
             <p className="text-lg md:text-xl text-slate-600 leading-relaxed font-light">
@@ -1569,10 +1844,12 @@ export default function App() {
             ))}
           </div>
         </div>
+        </div>
       </section>
 
       {/* Services */}
-      <section id="services" className="py-28 lg:py-32 bg-white border-t border-slate-100 shadow-[inset_0_2px_20px_rgba(0,0,0,0.01)] relative">
+      <section id="services" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           
           {/* Services Subsection */}
@@ -1665,10 +1942,12 @@ export default function App() {
             </div>
           </div>
         </div>
+        </div>
       </section>
 
       {/* Legal Network */}
-      <section id="lawyers" className="py-28 lg:py-32 bg-gradient-to-b from-purple-50/40 via-purple-50/10 to-white border-t border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] relative">
+      <section id="lawyers" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div>
             <div className="text-center max-w-3xl mx-auto mb-16">
@@ -1843,11 +2122,13 @@ export default function App() {
             </div>
           </div>
         </div>
+        </div>
       </section>
 
 
       {/* FAQ Section */}
-      <section id="faq" className="py-28 lg:py-32 bg-white border-t border-slate-100 shadow-[inset_0_2px_20px_rgba(0,0,0,0.01)] relative overflow-hidden">
+      <section id="faq" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.03),transparent_70%)]" />
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="text-center mb-16">
@@ -1905,10 +2186,12 @@ export default function App() {
             ))}
           </div>
         </div>
+        </div>
       </section>
 
       {/* Early Access */}
-      <section id="early-access" className="py-28 lg:py-32 bg-gradient-to-b from-purple-50/50 via-purple-50/20 to-purple-100/30 border-t border-purple-200/60 shadow-[inset_0_2px_20px_rgba(147,51,234,0.05)] relative overflow-hidden">
+      <section id="early-access" className="py-12 lg:py-16 relative">
+        <div className="max-w-[96%] mx-auto bg-gradient-to-b from-purple-50/80 to-indigo-50/30 rounded-[2.5rem] border border-purple-100/50 shadow-[inset_0_2px_20px_rgba(147,51,234,0.03)] overflow-hidden relative py-20 lg:py-24 transition-all duration-500 hover:shadow-[0_8px_40px_rgba(147,51,234,0.06)]">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(147,51,234,0.05),transparent_70%)]" />
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-px bg-gradient-to-r from-transparent via-purple-300/50 to-transparent" />
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
@@ -1946,6 +2229,7 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
         </div>
       </section>
 
@@ -2606,6 +2890,359 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {isAuthModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+            onClick={() => setIsAuthModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", duration: 0.5 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md bg-white/90 backdrop-blur-xl rounded-3xl shadow-[0_20px_60px_rgba(147,51,234,0.15)] border border-purple-100 overflow-hidden relative"
+            >
+              <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-purple-500 to-indigo-500" />
+              
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg">
+                      <Scale className="w-5 h-5 text-white" />
+                    </div>
+                    <span className="text-xl font-serif font-bold text-slate-900 tracking-tight">Lion LawSense</span>
+                  </div>
+                  <button 
+                    onClick={() => setIsAuthModalOpen(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="flex bg-slate-100/80 p-1 rounded-xl mb-8">
+                  <button
+                    onClick={() => setAuthTab('login')}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+                      authTab === 'login' 
+                        ? 'bg-white text-purple-700 shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Login
+                  </button>
+                  <button
+                    onClick={() => setAuthTab('signup')}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
+                      authTab === 'signup' 
+                        ? 'bg-white text-purple-700 shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Sign Up
+                  </button>
+                </div>
+
+                {authTab === 'login' ? (
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+                      <input type="email" placeholder="Enter your email" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                      <input type="password" placeholder="Enter your password" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" className="rounded border-slate-300 text-purple-600 focus:ring-purple-500" />
+                        <span className="text-slate-600">Remember me</span>
+                      </label>
+                      <a href="#" className="text-purple-600 font-medium hover:text-purple-700">Forgot password?</a>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setIsAuthModalOpen(false);
+                        if (pendingConsultation) {
+                          setPendingConsultation(false);
+                          setShowToast(true);
+                          setTimeout(() => setShowToast(false), 3000);
+                        }
+                      }}
+                      className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg mt-2"
+                    >
+                      Login
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Full Name</label>
+                      <input type="text" placeholder="Enter your full name" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+                      <input type="email" placeholder="Enter your email" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                      <input type="password" placeholder="Create a password" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">I am a:</label>
+                      <select className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all text-slate-700">
+                        <option>Self-Represented Individual</option>
+                        <option>SME / Startup</option>
+                        <option>Lawyer / Partner</option>
+                      </select>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setIsAuthModalOpen(false);
+                        if (pendingConsultation) {
+                          setPendingConsultation(false);
+                          setShowToast(true);
+                          setTimeout(() => setShowToast(false), 3000);
+                        }
+                      }}
+                      className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg mt-2"
+                    >
+                      Create Account
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-8">
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                      <span className="px-2 bg-white text-slate-500">Or continue with</span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setIsAuthModalOpen(false);
+                      if (pendingConsultation) {
+                        setPendingConsultation(false);
+                        setShowToast(true);
+                        setTimeout(() => setShowToast(false), 3000);
+                      }
+                    }}
+                    className="mt-6 w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-colors text-slate-700 font-medium"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                    </svg>
+                    Continue with Google
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setIsAuthModalOpen(false);
+                      setIsGuestModalOpen(true);
+                    }}
+                    className="mt-3 w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition-colors text-slate-600 font-medium"
+                  >
+                    Continue as Guest
+                  </button>
+                </div>
+                
+                <p className="text-center text-xs text-slate-500 mt-6 leading-relaxed">
+                  Access saved cases, consultation packets, and matched lawyer consultations.
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Guest Modal */}
+      <AnimatePresence>
+        {isGuestModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+            onClick={() => setIsGuestModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", duration: 0.5 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md bg-white rounded-3xl shadow-[0_20px_60px_rgba(147,51,234,0.15)] border border-purple-100 overflow-hidden relative"
+            >
+              <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-purple-500 to-indigo-500" />
+              
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
+                      <Scale className="w-5 h-5 text-white" />
+                    </div>
+                    <span className="text-xl font-bold text-slate-900 tracking-tight">Guest Details</span>
+                  </div>
+                  <button 
+                    onClick={() => setIsGuestModalOpen(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Full Name</label>
+                    <input type="text" placeholder="Enter your full name" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+                    <input type="email" placeholder="Enter your email" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Contact Number</label>
+                    <input type="tel" placeholder="Enter your contact number" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setIsGuestModalOpen(false);
+                      if (pendingConsultation) {
+                        setPendingConsultation(false);
+                        setShowToast(true);
+                        setTimeout(() => setShowToast(false), 3000);
+                      }
+                    }}
+                    className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg mt-2"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedHowItWorksStep && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+            onClick={() => setSelectedHowItWorksStep(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", duration: 0.5 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-2xl bg-white rounded-3xl shadow-[0_20px_60px_rgba(147,51,234,0.15)] border border-purple-100 overflow-hidden relative max-h-[90vh] flex flex-col"
+            >
+              <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-r from-purple-500 to-indigo-500" />
+              
+              <div className="p-8 pb-6 border-b border-slate-100 shrink-0">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-50 flex items-center justify-center text-purple-600">
+                      <selectedHowItWorksStep.icon className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-purple-600 tracking-wider uppercase mb-1">Step {selectedHowItWorksStep.step}</div>
+                      <h3 className="text-xl font-bold text-slate-900">{selectedHowItWorksStep.title}</h3>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setSelectedHowItWorksStep(null)}
+                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-slate-600 mt-4 leading-relaxed">
+                  {selectedHowItWorksStep.desc}
+                </p>
+              </div>
+
+              <div className="p-8 overflow-y-auto">
+                <div className="grid md:grid-cols-2 gap-8 mb-8">
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                      <User className="w-4 h-4 text-purple-500" />
+                      What the user does
+                    </h4>
+                    <ul className="space-y-3">
+                      {selectedHowItWorksStep.userDoes.map((item: string, idx: number) => (
+                        <li key={idx} className="flex items-start gap-3 text-sm text-slate-600">
+                          <div className="w-1.5 h-1.5 rounded-full bg-slate-300 mt-1.5 shrink-0" />
+                          <span className="leading-relaxed">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                      <Bot className="w-4 h-4 text-purple-500" />
+                      What Lion LawSense does
+                    </h4>
+                    <ul className="space-y-3">
+                      {selectedHowItWorksStep.lionDoes.map((item: string, idx: number) => (
+                        <li key={idx} className="flex items-start gap-3 text-sm text-slate-600">
+                          <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
+                          <span className="leading-relaxed">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 mb-8">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-purple-500" />
+                    Example Outputs
+                  </h4>
+                  <ul className="space-y-3">
+                    {selectedHowItWorksStep.exampleOutputs.map((example: string, idx: number) => (
+                      <li key={idx} className="flex items-start gap-3 text-sm text-slate-600">
+                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
+                        <span className="leading-relaxed">{example}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-500" />
+                    Why this matters
+                  </h4>
+                  <ul className="space-y-3">
+                    {selectedHowItWorksStep.whyMatters.map((item: string, idx: number) => (
+                      <li key={idx} className="flex items-start gap-3 text-sm text-slate-600">
+                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0" />
+                        <span className="leading-relaxed">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Footer */}
       <footer className="bg-slate-950 pt-24 pb-12 relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(147,51,234,0.1),transparent_50%)]" />
